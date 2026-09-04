@@ -40,12 +40,12 @@ def inworld_submit_and_wait(text: str, agent: str, mode: str, session_id: str) -
     if not job_id:
         raise RuntimeError("inworld_job_not_created")
 
-    deadline = time.monotonic() + 95
+    deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         _, state = fetch_json(
             INWORLD_QUEUE + "/job?id=" + urllib.parse.quote(str(job_id)),
             headers={"x-dayong-bridge-token": BRIDGE_TOKEN},
-            timeout=30,
+            timeout=20,
         )
         job = state.get("job") or {}
         status = job.get("status")
@@ -55,7 +55,7 @@ def inworld_submit_and_wait(text: str, agent: str, mode: str, session_id: str) -
             return result
         if status == "FAILED":
             raise RuntimeError("inworld_worker_failed: " + str(job.get("error") or "unknown"))
-        time.sleep(0.55)
+        time.sleep(0.08)
     raise TimeoutError("inworld_job_timeout")
 
 
@@ -88,7 +88,7 @@ def startup_probe():
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "DAYONG-Voice-Gateway/0.4"
+    server_version = "DAYONG-Voice-Gateway/0.5"
 
     def log_message(self, fmt, *args):
         print("VOICE_HTTP", self.address_string(), fmt % args, flush=True)
@@ -120,14 +120,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             if not UPSTREAM:
-                self.send_json(200, {"ok": True, "service": "dayong-voice-gateway", "version": "0.4", "conference": True, "inworld_queue": queue_ok, "agents": {"CEO-002": False, "D1": False, "D2": False}, "upstream": "UNCONFIGURED"})
+                self.send_json(200, {"ok": True, "service": "dayong-voice-gateway", "version": "0.5", "conference": True, "inworld_queue": queue_ok, "agents": {"CEO-002": False, "D1": False, "D2": False}, "upstream": "UNCONFIGURED"})
                 return
             try:
                 _, j = fetch_json(UPSTREAM + "/health")
                 agents = j.get("agents", {})
-                self.send_json(200, {"ok": True, "service": "dayong-voice-gateway", "version": "0.4", "conference": True, "inworld_queue": queue_ok, "voices": {"D1": "Sarah", "D2": "Dennis"}, "agents": {"CEO-002": False, "D1": bool(agents.get("D1")), "D2": bool(agents.get("D2"))}, "upstream": j})
+                self.send_json(200, {"ok": True, "service": "dayong-voice-gateway", "version": "0.5", "conference": True, "inworld_queue": queue_ok, "low_latency_poll_ms": 80, "voices": {"D1": "Sarah", "D2": "Dennis"}, "agents": {"CEO-002": False, "D1": bool(agents.get("D1")), "D2": bool(agents.get("D2"))}, "upstream": j})
             except Exception as exc:
-                self.send_json(200, {"ok": True, "service": "dayong-voice-gateway", "version": "0.4", "conference": True, "inworld_queue": queue_ok, "agents": {"CEO-002": False, "D1": False, "D2": False}, "upstream_error": str(exc)[:240]})
+                self.send_json(200, {"ok": True, "service": "dayong-voice-gateway", "version": "0.5", "conference": True, "inworld_queue": queue_ok, "agents": {"CEO-002": False, "D1": False, "D2": False}, "upstream_error": str(exc)[:240]})
             return
         self.send_json(404, {"error": "not_found"})
 
@@ -145,7 +145,7 @@ class Handler(BaseHTTPRequestHandler):
                 agent = "D2" if str(obj.get("agent", "D1")).upper() == "D2" else "D1"
                 mode = "realtime" if str(obj.get("mode", "standard")).lower() == "realtime" else "standard"
                 sid = str(obj.get("session_id") or uuid.uuid4())
-                result = inworld_submit_and_wait(text[:1200], agent, mode, sid)
+                result = inworld_submit_and_wait(text[:800], agent, mode, sid)
                 self.send_json(200, {"session_id": sid, "agent": agent, "mode": mode, "result": result})
                 return
 
@@ -171,6 +171,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(json.dumps({"event": "VOICE_GATEWAY_START", "version": "0.4", "host": HOST, "port": PORT, "upstream_configured": bool(UPSTREAM and BRIDGE_TOKEN), "inworld_queue": INWORLD_QUEUE}, ensure_ascii=False), flush=True)
+    print(json.dumps({"event": "VOICE_GATEWAY_START", "version": "0.5", "host": HOST, "port": PORT, "upstream_configured": bool(UPSTREAM and BRIDGE_TOKEN), "inworld_queue": INWORLD_QUEUE, "queue_poll_ms": 80}, ensure_ascii=False), flush=True)
     startup_probe()
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
