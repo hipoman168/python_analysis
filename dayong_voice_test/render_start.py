@@ -5,4 +5,5 @@ os.environ.setdefault("DAYONG_VOICE_PORT", os.getenv("PORT", "10000"))
 import server
 if __name__ == "__main__":
     print("DAYONG_RENDER_VOICE_START", flush=True)
+    server.startup_probe()
     server.ThreadingHTTPServer((server.HOST, server.PORT), server.Handler).serve_forever()
