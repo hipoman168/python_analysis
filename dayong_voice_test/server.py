@@ -18,6 +18,29 @@ def fetch_json(url: str, method: str = "GET", body: dict | None = None, headers:
         return resp.status, json.loads(raw)
 
 
+def startup_probe():
+    if not UPSTREAM:
+        print("UPSTREAM_HEALTH UNCONFIGURED", flush=True)
+        return
+    try:
+        _, h = fetch_json(UPSTREAM + "/health")
+        print("UPSTREAM_HEALTH " + json.dumps(h, ensure_ascii=False), flush=True)
+        agents = h.get("agents", {})
+        if BRIDGE_TOKEN and agents.get("D1") and agents.get("D2"):
+            _, s = fetch_json(
+                UPSTREAM + "/conference",
+                method="POST",
+                body={"text": "請各用一句話回覆：語音橋接測試成功。"},
+                headers={"Content-Type": "application/json", "x-dayong-bridge-token": BRIDGE_TOKEN},
+            )
+            brief = [{"agent": t.get("agent"), "status": t.get("status"), "model": t.get("model"), "reply": (t.get("reply") or "")[:80]} for t in s.get("turns", [])]
+            print("UPSTREAM_SMOKE " + json.dumps(brief, ensure_ascii=False), flush=True)
+        else:
+            print("UPSTREAM_SMOKE SKIPPED_AGENTS_NOT_READY", flush=True)
+    except Exception as exc:
+        print("UPSTREAM_PROBE_ERROR " + repr(exc), flush=True)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "DAYONG-Voice-Gateway/0.3"
 
@@ -71,14 +94,14 @@ class Handler(BaseHTTPRequestHandler):
             if not UPSTREAM or not BRIDGE_TOKEN:
                 self.send_json(503, {"error": "upstream_not_configured"})
                 return
+            sid = str(obj.get("session_id") or uuid.uuid4())
             _, upstream = fetch_json(
                 UPSTREAM + "/conference",
                 method="POST",
-                body={"text": text, "session_id": str(obj.get("session_id") or uuid.uuid4())},
+                body={"text": text, "session_id": sid},
                 headers={"Content-Type": "application/json", "x-dayong-bridge-token": BRIDGE_TOKEN},
             )
-            turns = upstream.get("turns", [])
-            self.send_json(200, {"session_id": str(obj.get("session_id") or uuid.uuid4()), "mode": "D1_D2_SEQUENTIAL", "turn_order": ["D1", "D2"], "turns": turns})
+            self.send_json(200, {"session_id": sid, "mode": "D1_D2_SEQUENTIAL", "turn_order": ["D1", "D2"], "turns": upstream.get("turns", [])})
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:300]
             self.send_json(502, {"error": "upstream_http_error", "http_status": exc.code, "detail": detail})
@@ -88,4 +111,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(json.dumps({"event": "VOICE_GATEWAY_START", "version": "0.3", "host": HOST, "port": PORT, "upstream_configured": bool(UPSTREAM and BRIDGE_TOKEN)}, ensure_ascii=False), flush=True)
+    startup_probe()
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
