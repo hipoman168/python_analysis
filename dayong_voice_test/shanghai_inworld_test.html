@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>上海 Inworld Standard / Realtime 測試</title>
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#101114;color:#f3f3f3;max-width:760px;margin:24px auto;padding:16px}
+.card{background:#1a1d22;border:1px solid #30343b;border-radius:16px;padding:18px;margin:14px 0}
+h1{font-size:28px}textarea,select,button{font:inherit;border-radius:10px;border:1px solid #555;background:#23262c;color:#fff;padding:12px}textarea{width:100%;box-sizing:border-box;min-height:100px}button{cursor:pointer;margin-right:8px;margin-top:8px}.primary{background:#1769d2}.realtime{background:#8b4fc6}.ok{color:#86f59a}.bad{color:#ff9696}.muted{color:#aaa;font-size:14px}#log{white-space:pre-wrap;background:#090a0c;border-radius:10px;padding:12px;min-height:120px;overflow:auto}</style>
+</head>
+<body>
+<h1>上海 Inworld 語音測試</h1>
+<p class="muted">用途：驗收 Standard 與 Realtime 兩條 Inworld 音訊鏈。此頁使用相對 API 路徑，可部署在 <code>/voice-test/</code> 下。</p>
+<div class="card">
+<label>角色：
+<select id="agent"><option value="D1">D1 小晴</option><option value="D2">D2 阿凱</option></select>
+</label>
+<textarea id="text">這是上海伺服器 Inworld 語音測試。</textarea>
+<button class="primary" id="standard">▶ 測試 Standard</button>
+<button class="realtime" id="realtime">⚡ 測試 Realtime</button>
+<button id="stop">停止</button>
+</div>
+<div class="card">狀態：<span id="status">尚未測試</span><div id="log"></div></div>
+<script>
+const $=id=>document.getElementById(id);let currentAudio=null;
+function log(s){$('log').textContent+=s+'\n';$('log').scrollTop=$('log').scrollHeight}
+function b64blob(b64,type='audio/wav'){const bin=atob(b64),bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return new Blob([bytes],{type})}
+async function health(){try{const r=await fetch('api/health',{cache:'no-store'}),j=await r.json();if(r.ok&&j.ok){$('status').textContent='Gateway READY';$('status').className='ok';log('HEALTH PASS · '+j.service+' · v'+j.version)}else throw Error(j.detail||j.error||r.status)}catch(e){$('status').textContent='Gateway FAIL';$('status').className='bad';log('HEALTH FAIL · '+e.message)}}
+async function run(mode){const text=$('text').value.trim(),agent=$('agent').value;if(!text)return;try{$('status').textContent=mode+' 執行中…';$('status').className='';log('REQUEST '+mode.toUpperCase()+' · '+agent);const r=await fetch('api/inworld',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text,agent,mode,session_id:crypto.randomUUID()})});const j=await r.json();if(!r.ok)throw Error(j.detail||j.error||r.status);const result=j.result||{};if(!result.audioContent)throw Error('回傳成功但沒有 audioContent');const url=URL.createObjectURL(b64blob(result.audioContent,result.contentType||'audio/wav'));currentAudio=new Audio(url);await currentAudio.play();await new Promise((res,rej)=>{currentAudio.onended=res;currentAudio.onerror=rej});URL.revokeObjectURL(url);currentAudio=null;$('status').textContent=mode+' AUDIO PASS';$('status').className='ok';log('AUDIO PASS · '+mode.toUpperCase()+' · job_id='+(result.job_id||'n/a'))}catch(e){$('status').textContent=mode+' FAIL';$('status').className='bad';log('FAIL · '+mode.toUpperCase()+' · '+e.message)}}
+$('standard').onclick=()=>run('standard');$('realtime').onclick=()=>run('realtime');$('stop').onclick=()=>{if(currentAudio){currentAudio.pause();currentAudio=null}$('status').textContent='已停止'};health();
+</script>
+</body>
+</html>
