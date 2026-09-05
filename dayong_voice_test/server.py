@@ -96,6 +96,20 @@ def recent_context(message_limit=24, meeting_limit=6):
     return "\n\n".join(parts)
 
 
+def meeting_packet():
+    if not BRIDGE_TOKEN:
+        return {"ok": False, "error": "bridge_token_not_configured"}
+    try:
+        _, j = fetch_json(FAMILY_BUS + "/meeting-packet", headers=bridge_headers(), timeout=20)
+        return j.get("packet") if isinstance(j, dict) and "packet" in j else j
+    except Exception as exc:
+        return {"ok": False, "error": "meeting_packet_unavailable", "detail": str(exc)[:240]}
+
+
+def meeting_context():
+    return recent_context(24, 6) + "\n\n正式兩階段 Meeting Packet（真實工單、主管報告、上一場會議紀錄與未完成 follow-up）：\n" + json.dumps(meeting_packet(), ensure_ascii=False)
+
+
 def persist_meeting(session_id, topic, meeting_summary):
     payload = {
         "session_id": session_id,
@@ -105,7 +119,7 @@ def persist_meeting(session_id, topic, meeting_summary):
         "open_items": (meeting_summary or {}).get("open_items") or [],
         "action_items": (meeting_summary or {}).get("action_items") or [],
         "status": str((meeting_summary or {}).get("status") or "FOLLOW_UP"),
-        "metadata": {"source": "RENDER_DYNAMIC_FAMILY_DISCUSSION", "memory_version": "1.0"},
+        "metadata": {"source": "RENDER_DYNAMIC_FAMILY_DISCUSSION", "memory_version": "2.0", "meeting_standard": "DAYONG_TWO_PHASE_WORK_MEETING_V1"},
     }
     try:
         _, out = fetch_json(FAMILY_BUS + "/meeting/finalize", method="POST", body=payload, headers=bridge_headers(True), timeout=25)
@@ -121,12 +135,13 @@ def startup_probe():
             print("UPSTREAM_HEALTH " + json.dumps(h, ensure_ascii=False), flush=True)
         _, fh = fetch_json(FAMILY_BUS + "/health", headers=bridge_headers(), timeout=20)
         print("FAMILY_ROOM_HEALTH " + json.dumps(fh, ensure_ascii=False), flush=True)
+        print("MEETING_PACKET_PROBE " + json.dumps(meeting_packet(), ensure_ascii=False)[:1200], flush=True)
     except Exception as exc:
         print("STARTUP_PROBE_ERROR " + repr(exc), flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "DAYONG-Voice-Gateway/0.8"
+    server_version = "DAYONG-Voice-Gateway/0.9"
 
     def log_message(self, fmt, *args):
         print("VOICE_HTTP", self.address_string(), fmt % args, flush=True)
@@ -157,6 +172,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(raw)
             return
+        if parsed.path == "/api/meeting-packet":
+            packet = meeting_packet()
+            self.send_json(200 if not packet.get("error") else 502, {"ok": not bool(packet.get("error")), "packet": packet})
+            return
         if parsed.path in ("/api/family/messages", "/api/family/meetings", "/api/family/open-actions"):
             try:
                 qs = urllib.parse.parse_qs(parsed.query)
@@ -170,7 +189,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(502, {"ok": False, "error": "family_memory_unavailable", "detail": str(exc)[:240]})
             return
         if parsed.path == "/api/health":
-            family_ok = queue_ok = False
+            family_ok = queue_ok = packet_ok = False
             try:
                 _, q = fetch_json(INWORLD_QUEUE + "/health", timeout=15)
                 queue_ok = bool(q.get("ok"))
@@ -182,18 +201,23 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             try:
+                packet_ok = not bool(meeting_packet().get("error"))
+            except Exception:
+                pass
+            try:
                 _, j = fetch_json(UPSTREAM + "/health") if UPSTREAM else (200, {"agents": {}})
                 agents = j.get("agents", {})
                 self.send_json(200, {
-                    "ok": True, "service": "dayong-voice-gateway", "version": "0.8", "room_id": ROOM_ID,
-                    "family_bus": family_ok, "inworld_queue": queue_ok,
+                    "ok": True, "service": "dayong-voice-gateway", "version": "0.9", "room_id": ROOM_ID,
+                    "family_bus": family_ok, "inworld_queue": queue_ok, "meeting_packet_runtime": packet_ok,
+                    "meeting_standard": "DAYONG_TWO_PHASE_WORK_MEETING_V1",
                     "discussion_mode": bool(j.get("discussion_mode")), "dynamic_discussion": bool(j.get("dynamic_discussion")),
                     "meeting_memory": family_ok, "ceo_provider_role_fallback": bool(j.get("ceo_provider_role_fallback")),
                     "agents": {"CEO-002": bool(agents.get("CEO-002")), "D1": bool(agents.get("D1")), "D2": bool(agents.get("D2"))},
                     "upstream": j,
                 })
             except Exception as exc:
-                self.send_json(200, {"ok": True, "version": "0.8", "family_bus": family_ok, "inworld_queue": queue_ok, "agents": {"CEO-002": False, "D1": False, "D2": False}, "upstream_error": str(exc)[:240]})
+                self.send_json(200, {"ok": True, "version": "0.9", "family_bus": family_ok, "inworld_queue": queue_ok, "meeting_packet_runtime": packet_ok, "agents": {"CEO-002": False, "D1": False, "D2": False}, "upstream_error": str(exc)[:240]})
             return
         self.send_json(404, {"error": "not_found"})
 
@@ -219,8 +243,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/discussion":
                 family_post("CHAIRMAN-001", "何董事長", text, sid, message_type="TOPIC", metadata={"kind": "dynamic_family_discussion_topic"})
-                context = recent_context(24, 6)
-                _, upstream = fetch_json(UPSTREAM + "/discussion", method="POST", body={"text": text, "session_id": sid, "room_id": ROOM_ID, "history": context}, headers=bridge_headers(True), timeout=150)
+                context = meeting_context()
+                _, upstream = fetch_json(UPSTREAM + "/discussion", method="POST", body={"text": text, "session_id": sid, "room_id": ROOM_ID, "history": context, "meeting_standard": "DAYONG_TWO_PHASE_WORK_MEETING_V1"}, headers=bridge_headers(True), timeout=150)
                 turns = upstream.get("turns", [])
                 receipts = []
                 for t in turns:
@@ -259,6 +283,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(json.dumps({"event": "VOICE_GATEWAY_START", "version": "0.8", "room_id": ROOM_ID, "host": HOST, "port": PORT, "discussion_mode": True, "dynamic_discussion": True, "meeting_memory": True}, ensure_ascii=False), flush=True)
+    print(json.dumps({"event": "VOICE_GATEWAY_START", "version": "0.9", "room_id": ROOM_ID, "host": HOST, "port": PORT, "discussion_mode": True, "dynamic_discussion": True, "meeting_memory": True, "meeting_packet_runtime": True}, ensure_ascii=False), flush=True)
     startup_probe()
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
