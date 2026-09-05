@@ -25,8 +25,21 @@ _original_get = server.Handler.do_GET
 _original_post = server.Handler.do_POST
 
 
+def _serve_audition_page(self):
+    raw = (server.ROOT / "audition.html").read_bytes()
+    self.send_response(200)
+    self.send_header("Content-Type", "text/html; charset=utf-8")
+    self.send_header("Content-Length", str(len(raw)))
+    self.send_header("Cache-Control", "no-store")
+    self.end_headers()
+    self.wfile.write(raw)
+
+
 def _audition_get(self):
-    if self.path.split("?", 1)[0] != "/api/voice-audition/health":
+    path = self.path.split("?", 1)[0]
+    if path in {"/audition", "/audition/", "/audition.html"}:
+        return _serve_audition_page(self)
+    if path != "/api/voice-audition/health":
         return _original_get(self)
     try:
         status, out = server.fetch_json(
