@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>大用固定聲線盲聽驗收</title>
+<style>
+body{font-family:system-ui;background:#111;color:#eee;max-width:760px;margin:20px auto;padding:16px}
+.card{background:#1c1c1c;border:1px solid #333;border-radius:16px;padding:18px;margin:14px 0}
+button{font-size:19px;padding:14px 20px;border-radius:10px;border:1px solid #555;background:#222;color:#fff;margin:5px;min-width:72px}
+button:hover{background:#333}.primary{background:#1769d2}.ok{color:#7dff9c}.bad{color:#ff8888}.muted{color:#aaa;font-size:14px;line-height:1.5}
+#status{white-space:pre-wrap;background:#090909;padding:12px;border-radius:10px;min-height:45px}
+</style>
+</head>
+<body>
+<h1>固定聲線盲聽驗收</h1>
+<p class="muted">只顯示 A / B / C，不顯示實際 Voice ID。每個角色使用固定中文文案。請只依「自然度、角色感、彼此辨識度」判斷。</p>
+
+<div class="card">
+<h2>002 陳啟航｜成熟自然主管男聲</h2>
+<p class="muted">目標：穩重、自然、像主管，不老氣；必須與阿凱一聽就能分辨。</p>
+<button onclick="play('CEO-002','A')">A</button>
+<button onclick="play('CEO-002','B')">B</button>
+<button onclick="play('CEO-002','C')">C</button>
+</div>
+
+<div class="card">
+<h2>D1 小晴｜已核准俏皮女聲回驗</h2>
+<p class="muted">這裡只有一支候選，用來確認是不是之前董事長核准的那支聲線。</p>
+<button onclick="play('D1','A')">A</button>
+</div>
+
+<div class="card">
+<h2>D2 阿凱｜年輕明亮活潑男聲</h2>
+<p class="muted">目標：較年輕、明亮、活潑、自然；不得像 002。</p>
+<button onclick="play('D2','A')">A</button>
+<button onclick="play('D2','B')">B</button>
+<button onclick="play('D2','C')">C</button>
+</div>
+
+<div class="card">
+<b>狀態</b>
+<div id="status">準備完成。請點 A / B / C。</div>
+</div>
+
+<script>
+let currentAudio=null;
+function b64blob(b64,type='audio/wav'){
+  const bin=atob(b64),bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  return new Blob([bytes],{type});
+}
+async function play(role,slot){
+  const s=document.getElementById('status');
+  try{
+    if(currentAudio){currentAudio.pause();currentAudio=null;}
+    s.className='';s.textContent=`正在產生 ${role} 候選 ${slot}…`;
+    const r=await fetch('/api/voice-audition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({role,slot})});
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.detail||j.error||`HTTP ${r.status}`);
+    if(!j.audioContent)throw new Error('沒有收到音訊');
+    const url=URL.createObjectURL(b64blob(j.audioContent,j.contentType||'audio/wav'));
+    currentAudio=new Audio(url);
+    currentAudio.onended=()=>{URL.revokeObjectURL(url);currentAudio=null;s.className='ok';s.textContent=`${role} 候選 ${slot} 播放完成。`;};
+    currentAudio.onerror=()=>{URL.revokeObjectURL(url);currentAudio=null;s.className='bad';s.textContent='播放失敗';};
+    await currentAudio.play();
+    s.className='ok';s.textContent=`正在播放 ${role} 候選 ${slot}。`;
+  }catch(e){s.className='bad';s.textContent='錯誤：'+e.message;}
+}
+</script>
+</body>
+</html>
