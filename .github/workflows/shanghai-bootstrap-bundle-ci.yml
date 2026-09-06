@@ -20,8 +20,10 @@ jobs:
           set -euo pipefail
           f=blacklight_factory/bootstrap/shanghai_linux_safe_executor_v2.sh
           grep -q 'DAYONG_SHANGHAI_BOOTSTRAP_PASS' "$f"
-          grep -q 'credential_mount_missing' "$f"
+          grep -q 'WORKER_CREDENTIAL_RECOVERED' "$f"
+          grep -q 'worker_credential_not_found' "$f"
           grep -q 'NoNewPrivileges=true' "$f"
           grep -q "tool!='LOCAL_LINUX_SAFE'" "$f"
-          ! grep -E 'DAYONG_MCP_API_KEY=[A-Za-z0-9_-]{20,}' "$f"
+          grep -q 'worker-node-gateway' "$f"
+          ! grep -E 'DAYONG_(MCP_API_KEY|WORKER_TOKEN)=[A-Za-z0-9_-]{20,}' "$f"
           echo SHANGHAI_BOOTSTRAP_STATIC_GATE_PASS
