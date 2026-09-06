@@ -1,0 +1,29 @@
+{
+  "request_id": "2026-09-06-fb-voice-ai-agent-architecture",
+  "source_url": "https://www.facebook.com/share/v/1C5wpoDifB/",
+  "source_type": "facebook",
+  "purpose": "learning_research",
+  "submitted_by": "CHAIRMAN-001",
+  "requested_consumers": ["CEO-002", "PATENT-COMMANDER", "PAPER-COMMANDER", "VOICE-TECH-RND"],
+  "raw_share_required": true,
+  "screenshot_context": {
+    "visible_title": "VOICE AI AGENT ARCHITECTURE",
+    "visible_components": [
+      "WebSocket Gateway",
+      "Audio Chunker and VAD",
+      "STT",
+      "Agent Layer",
+      "Retrieval Layer",
+      "Tool Calling layer",
+      "Memory Layer",
+      "Platform & Infrastructure",
+      "Auth & AuthZ",
+      "Session Store",
+      "Queue/Stream",
+      "Observability",
+      "Monitoring",
+      "CI/CD & Deploy"
+    ]
+  },
+  "notes": "Chairman shared this Facebook video plus screenshot during Shanghai server recovery. Preserve source and transcript first, then independently assess value for Dayong voice-agent architecture, patent, paper, and Family Room. Do not let this interrupt Shanghai recovery priority."
+}
