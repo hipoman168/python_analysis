@@ -48,7 +48,7 @@ jobs:
         run: |
           mkdir -p skill_output
           set +e
-          skill-seekers create --video-file work/source.mp4 --name fb-reel-learning \
+          skill-seekers create work/source.mp4 --name fb-reel-learning \
             --output skill_output/fb-reel-learning --whisper-model tiny \
             > evidence/skill_seekers.log 2>&1
           rc=$?
