@@ -1,0 +1,25 @@
+name: social-video-gateway-phase1
+
+on:
+  push:
+    branches:
+      - 'agent/social-video-gateway-phase1'
+  pull_request:
+    paths:
+      - 'blacklight_factory/social_video_gateway/**'
+
+jobs:
+  unit-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: blacklight_factory/social_video_gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - run: pytest -q
+      - name: FB share-link routing smoke
+        run: python gateway.py 'https://www.facebook.com/share/r/19b56K4KxL/'

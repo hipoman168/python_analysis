@@ -1,0 +1,32 @@
+name: social-video-gateway-public-probe
+
+on:
+  push:
+    branches:
+      - 'agent/social-video-gateway-phase1'
+    paths:
+      - '.github/workflows/social-video-gateway-public-probe.yml'
+
+jobs:
+  public-fb-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade yt-dlp
+      - name: Probe public Facebook Reel
+        shell: bash
+        run: |
+          mkdir -p evidence
+          set +e
+          python -m yt_dlp --verbose --skip-download --dump-single-json 'https://www.facebook.com/share/r/19b56K4KxL/' > evidence/fb_probe.log 2>&1
+          rc=$?
+          if [ "$rc" -eq 0 ]; then echo FB_PUBLIC_EXTRACT_PASS | tee evidence/status.txt; else echo FB_PUBLIC_EXTRACT_BLOCKED | tee evidence/status.txt; fi
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: social-video-fb-public-probe-hosted
+          path: evidence/
