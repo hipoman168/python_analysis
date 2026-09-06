@@ -1,0 +1,38 @@
+name: social-video-gateway-selfhosted-probe
+
+on:
+  push:
+    branches:
+      - 'agent/social-video-gateway-phase1'
+    paths:
+      - '.github/workflows/social-video-gateway-selfhosted-probe.yml'
+
+jobs:
+  public-fb-probe:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate Python
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python --version
+      - name: Install current yt-dlp
+        shell: powershell
+        run: python -m pip install --upgrade yt-dlp
+      - name: Probe public Facebook Reel without cookies
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path evidence | Out-Null
+          python -m yt_dlp --verbose --skip-download --dump-single-json 'https://www.facebook.com/share/r/19b56K4KxL/' *>&1 | Tee-Object -FilePath evidence\fb_probe.log
+          if ($LASTEXITCODE -eq 0) { 'FB_PUBLIC_EXTRACT_PASS' | Tee-Object -FilePath evidence\status.txt }
+          else { 'FB_PUBLIC_EXTRACT_BLOCKED' | Tee-Object -FilePath evidence\status.txt }
+          exit 0
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: social-video-fb-public-probe
+          path: evidence/
