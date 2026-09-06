@@ -1,0 +1,24 @@
+name: Shanghai Python311 Patch CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'blacklight_factory/bootstrap/shanghai_python311_executor_patch_v5.sh'
+      - '.github/workflows/shanghai-python311-patch-ci.yml'
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n blacklight_factory/bootstrap/shanghai_python311_executor_patch_v5.sh
+      - name: Static gate
+        run: |
+          set -euo pipefail
+          f=blacklight_factory/bootstrap/shanghai_python311_executor_patch_v5.sh
+          grep -q '/opt/dayong-cabinet/venv/bin/python' "$f"
+          grep -q 'DAYONG_EXECUTOR_PY311_PATCH_PASS' "$f"
+          grep -q 'systemctl restart' "$f"
+          ! grep -E 'DAYONG_(MCP_API_KEY|WORKER_TOKEN)=' "$f"
+          echo SHANGHAI_PY311_PATCH_STATIC_GATE_PASS
