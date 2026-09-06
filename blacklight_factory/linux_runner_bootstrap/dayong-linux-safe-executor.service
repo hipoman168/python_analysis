@@ -1,0 +1,20 @@
+[Unit]
+Description=DAYONG Linux Safe Executor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/dayong-command-seat/linux-runner
+EnvironmentFile=-/opt/dayong-command-seat/linux-runner/runtime.env
+ExecStart=/usr/bin/python3 /opt/dayong-command-seat/linux-runner/runner.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/dayong-command-seat /opt/dayong-voice /etc/systemd/system/dayong-voice.service.d /run /var/log
+
+[Install]
+WantedBy=multi-user.target
