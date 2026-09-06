@@ -9,8 +9,11 @@ trap 'rm -f "$TMP"' EXIT
 [[ "$(id -u)" -eq 0 ]] || { echo 'REENROLL_BLOCKED root_required' >&2; exit 20; }
 [[ ${#CODE} -ge 20 ]] || { echo 'REENROLL_BLOCKED enrollment_code_required' >&2; exit 21; }
 curl -fsSL --connect-timeout 15 --max-time 90 "$BASE_URL" -o "$TMP"
-if bash "$TMP"; then exit 0; fi
+set +e
+bash "$TMP"
 RC=$?
+set -e
+if [[ "$RC" -eq 0 ]]; then exit 0; fi
 [[ "$RC" -eq 21 ]] || exit "$RC"
 RESP="$(curl -fsS --connect-timeout 15 --max-time 60 -H 'content-type: application/json' -d "{\"code\":\"$CODE\",\"node_id\":\"$NODE_ID\"}" "$ENROLL_URL")"
 export RESP
