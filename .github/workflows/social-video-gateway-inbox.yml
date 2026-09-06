@@ -1,0 +1,86 @@
+name: social-video-gateway-inbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'blacklight_factory/social_video_gateway/requests/*.json'
+
+jobs:
+  ingest-request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve newest request
+        id: req
+        shell: bash
+        run: |
+          set -euo pipefail
+          req=$(ls -1t blacklight_factory/social_video_gateway/requests/*.json | head -n1)
+          url=$(python -c "import json;print(json.load(open('$req',encoding='utf-8'))['url'])")
+          echo "request=$req" >> "$GITHUB_OUTPUT"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Install ingestion runtime
+        shell: bash
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade yt-dlp 'skill-seekers[video-full]'
+      - name: Acquire public social video
+        shell: bash
+        env:
+          SOURCE_URL: ${{ steps.req.outputs.url }}
+        run: |
+          set -euo pipefail
+          mkdir -p work evidence skill_output
+          python -m yt_dlp --no-playlist -f 'bv*+ba/b' --merge-output-format mp4 \
+            -o 'work/source.%(ext)s' "$SOURCE_URL" > evidence/download.log 2>&1
+          test -s work/source.mp4
+          echo MEDIA_DOWNLOAD_PASS > evidence/download_status.txt
+          SOURCE_URL="$SOURCE_URL" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('work/source_manifest.json').write_text(json.dumps({
+              'source_url': os.environ['SOURCE_URL'],
+              'purpose': 'learning_only',
+              'acquisition_engine': 'yt-dlp',
+              'provenance_preserved': True
+          }, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+      - name: Convert to AI-readable knowledge
+        shell: bash
+        run: |
+          set +e
+          skill-seekers create work/source.mp4 --name social-video-learning \
+            --output skill_output/social-video-learning --whisper-model small \
+            --languages zh,en --enhance-level 0 \
+            > evidence/skill_seekers.log 2>&1
+          rc=$?
+          if [ "$rc" -eq 0 ] && test -f skill_output/social-video-learning/SKILL.md; then
+            echo SKILL_SEEKERS_INGEST_PASS > evidence/skill_seekers_status.txt
+          else
+            echo SKILL_SEEKERS_INGEST_BLOCKED > evidence/skill_seekers_status.txt
+          fi
+          exit 0
+      - name: Record summary
+        shell: bash
+        run: |
+          {
+            cat evidence/download_status.txt
+            cat evidence/skill_seekers_status.txt
+            echo SOURCE_MANIFEST_PRESENT=$(test -f work/source_manifest.json && echo yes || echo no)
+            echo SKILL_MD_PRESENT=$(test -f skill_output/social-video-learning/SKILL.md && echo yes || echo no)
+          } | tee evidence/summary.txt
+      - name: Upload evidence and knowledge
+        uses: actions/upload-artifact@v4
+        with:
+          name: social-video-inbox-${{ github.run_id }}
+          path: |
+            evidence/
+            work/source_manifest.json
+            skill_output/social-video-learning/
+          if-no-files-found: warn
