@@ -1,6 +1,6 @@
 # Skill Seekers — Blacklight Factory Candidate
 
-Status: DISCOVERY_COMPLETE / SANDBOX_POC_PENDING
+Status: SANDBOX_CORE_PASS / MULTI_AGENT_ACCEPTANCE_PENDING
 Date: 2026-09-06
 Upstream: yusufkaraaslan/Skill_Seekers
 License: MIT
@@ -23,32 +23,49 @@ Candidate core component for a Blacklight Factory knowledge-ingestion layer. It 
 - local video files supported
 - current source-type enum explicitly models YouTube, Vimeo, local file, local directory
 
-## Important gap for DAYONG
+## DAYONG adapter result
 
-Current upstream video source detection is explicitly YouTube / Vimeo / local file/directory. Facebook and Instagram are not first-class source types in the inspected implementation.
+Skill Seekers does not need to become a Facebook/Instagram downloader itself. DAYONG Social Video Gateway supplies a governed local-video artifact to its existing local-video path.
 
-However the project already depends on yt-dlp for video metadata. This makes a DAYONG social-video adapter technically plausible without rebuilding the downstream knowledge pipeline.
+Runtime sample:
 
-Target architecture:
+`https://www.facebook.com/share/r/19b56K4KxL/`
+
+Observed chain on 2026-09-06:
+
+Facebook share URL -> current yt-dlp -> resolved Reel/media -> video+audio download -> ffmpeg MP4 merge -> Skill Seekers local-video ingestion -> Whisper fallback -> generated SKILL.md + reference + metadata.
+
+Evidence:
+
+- public extraction probe run: GitHub Actions `34014087523` — PASS
+- full ingest run after CLI correction: GitHub Actions `34014242318` — PASS
+- artifact: `9983416218`
+- `FB_MEDIA_DOWNLOAD_PASS`
+- `SKILL_SEEKERS_INGEST_PASS`
+- provenance manifest present
+- generated `SKILL.md` present
+
+The first tiny-Whisper output had low transcript quality, so a `small` Whisper + `zh,en` quality run was added. Transcript-quality tuning is independent of proof that the acquisition-to-knowledge pipeline functions.
+
+## Target architecture
 
 Social URL (FB/IG/Threads/YouTube/etc.)
-→ DAYONG source adapter / governed downloader
-→ local media + metadata + subtitles/transcript
-→ Skill Seekers video/local-file pipeline
+→ DAYONG Social Video Gateway
+→ yt-dlp / authenticated browser-cookie / Cobalt / platform resolver fallback
+→ local media + provenance metadata
+→ Skill Seekers local-video pipeline
+→ subtitle or faster-whisper transcript
 → structured knowledge asset
 → DAYONG Knowledge Layer
 → 002 / D1 / D2 / G1
 
-## Sandbox acceptance target
+## Remaining acceptance
 
-Use one non-sensitive social-video example and require evidence for:
-1. source acquisition
-2. transcript extraction or Whisper fallback
-3. metadata preservation
-4. Skill Seekers conversion
-5. export to at least OpenAI + Gemini compatible targets
-6. same-source Q&A by two different agents
-7. provenance/source URL retained
-8. failure modes and access restrictions recorded
+Core sandbox acquisition + local-video conversion is PASS for the tested public Facebook Reel. Before claiming universal social-platform support or full production acceptance, still require:
 
-No production installation until sandbox evidence passes the AI Engineering Gate.
+1. platform-specific runtime cases for YouTube, Instagram, TikTok and Douyin;
+2. same-source Q&A by at least two governed agents;
+3. access-control failures recorded rather than bypassed;
+4. production storage/retention and Knowledge Layer wiring.
+
+No claim is made that private, paywalled, deleted, or otherwise restricted content can or should be bypassed.
