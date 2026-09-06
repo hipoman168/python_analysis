@@ -1,0 +1,27 @@
+name: Shanghai Bootstrap Bundle CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'blacklight_factory/bootstrap/shanghai_linux_safe_executor_v2.sh'
+      - '.github/workflows/shanghai-bootstrap-bundle-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n blacklight_factory/bootstrap/shanghai_linux_safe_executor_v2.sh
+      - name: Static safety assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=blacklight_factory/bootstrap/shanghai_linux_safe_executor_v2.sh
+          grep -q 'DAYONG_SHANGHAI_BOOTSTRAP_PASS' "$f"
+          grep -q 'credential_mount_missing' "$f"
+          grep -q 'NoNewPrivileges=true' "$f"
+          grep -q "tool!='LOCAL_LINUX_SAFE'" "$f"
+          ! grep -E 'DAYONG_MCP_API_KEY=[A-Za-z0-9_-]{20,}' "$f"
+          echo SHANGHAI_BOOTSTRAP_STATIC_GATE_PASS
