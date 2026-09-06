@@ -1,0 +1,71 @@
+name: Shanghai Inworld Acceptance
+
+on:
+  push:
+    paths:
+      - '.github/workflows/shanghai-inworld-acceptance.yml'
+  workflow_dispatch:
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Health probe
+        run: |
+          set -euo pipefail
+          curl -k -fsS https://139.196.108.23/voice-test/api/health | tee health.json
+          python - <<'PY'
+          import json
+          j=json.load(open('health.json'))
+          assert j.get('ok') is True, j
+          assert j.get('inworld_queue') is True, j
+          print('HEALTH_PASS')
+          PY
+
+      - name: Standard acceptance
+        run: |
+          set -euo pipefail
+          curl -k -sS --fail-with-body -X POST \
+            https://139.196.108.23/voice-test/api/inworld \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"你好，這是大用科技上海伺服器 Standard 語音驗收測試。","agent":"D1","mode":"standard","session_id":"gha-shanghai-standard-001"}' \
+            | tee standard.json
+          python - <<'PY'
+          import json
+          j=json.load(open('standard.json'))
+          assert j.get('mode') == 'standard', j
+          assert j.get('result'), j
+          print('STANDARD_API_PASS')
+          print(json.dumps(j, ensure_ascii=False)[:2000])
+          PY
+
+      - name: Realtime acceptance
+        run: |
+          set -euo pipefail
+          curl -k -sS --fail-with-body -X POST \
+            https://139.196.108.23/voice-test/api/inworld \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"你好，這是大用科技上海伺服器 Realtime 語音驗收測試。","agent":"D2","mode":"realtime","session_id":"gha-shanghai-realtime-001"}' \
+            | tee realtime.json
+          python - <<'PY'
+          import json
+          j=json.load(open('realtime.json'))
+          assert j.get('mode') == 'realtime', j
+          assert j.get('result'), j
+          print('REALTIME_API_PASS')
+          print(json.dumps(j, ensure_ascii=False)[:2000])
+          PY
+
+      - name: Summarize evidence
+        if: always()
+        run: |
+          echo '=== HEALTH ==='
+          cat health.json 2>/dev/null || true
+          echo
+          echo '=== STANDARD ==='
+          cat standard.json 2>/dev/null || true
+          echo
+          echo '=== REALTIME ==='
+          cat realtime.json 2>/dev/null || true
+          echo
