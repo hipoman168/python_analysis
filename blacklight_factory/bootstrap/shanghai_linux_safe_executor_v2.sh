@@ -7,10 +7,10 @@ SERVICE="dayong-linux-safe-executor"
 BACKUP_ROOT="/opt/dayong-command-seat/backups"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="$BACKUP_ROOT/linux-runner-$STAMP"
+WORKER_GATEWAY="https://slsxzbevdoctwnncywwh.supabase.co/functions/v1/worker-node-gateway"
 
 [[ "$(id -u)" -eq 0 ]] || { echo 'BOOTSTRAP_BLOCKED root_required' >&2; exit 20; }
 install -d -m 0755 "$DST" "$BACKUP_ROOT"
-
 if [[ -f "$DST/runner.py" || -f "$DST/runtime.env" ]]; then
   install -d -m 0700 "$BACKUP_DIR"
   cp -a "$DST/." "$BACKUP_DIR/" 2>/dev/null || true
@@ -18,31 +18,26 @@ fi
 
 cat > "$DST/runner.py" <<'PY'
 #!/usr/bin/env python3
-import hashlib
-import json
-import os
-import time
-import urllib.request
+import hashlib,json,os,time,urllib.request
 from voice_gateway import execute_voice_gateway_action
-AGENT_ID=os.getenv('DAYONG_AGENT_ID','CEO-002')
 NODE_ID=os.getenv('DAYONG_NODE_ID','DY-CN-SHANGHAI-001')
-GATEWAY=os.getenv('DAYONG_TOOL_GATEWAY_URL','https://slsxzbevdoctwnncywwh.supabase.co/functions/v1/command-seat-tool-gateway')
-KEY=os.getenv('DAYONG_MCP_API_KEY','')
+GATEWAY=os.getenv('DAYONG_WORKER_GATEWAY_URL','https://slsxzbevdoctwnncywwh.supabase.co/functions/v1/worker-node-gateway')
+TOKEN=os.getenv('DAYONG_WORKER_TOKEN','')
 POLL_SECONDS=max(2,int(os.getenv('DAYONG_TOOL_POLL_SECONDS','5')))
-EXECUTOR_VERSION='DAYONG_LINUX_SAFE_EXECUTOR_V2'
-def post(body):
-    req=urllib.request.Request(GATEWAY,data=json.dumps(body,ensure_ascii=False).encode(),headers={'content-type':'application/json','x-dayong-mcp-key':KEY},method='POST')
+EXECUTOR_VERSION='DAYONG_LINUX_SAFE_EXECUTOR_V3_WORKER_TRANSPORT'
+def api(action,**kwargs):
+    body={'action':action,**kwargs}
+    req=urllib.request.Request(GATEWAY,data=json.dumps(body,ensure_ascii=False).encode(),headers={'content-type':'application/json','x-worker-token':TOKEN},method='POST')
     return json.loads(urllib.request.urlopen(req,timeout=90).read().decode())
-def api(action,**kwargs): return post({'action':action,'agent_id':AGENT_ID,**kwargs})
 def execute(request):
     tool=str(request.get('tool_name','')).upper(); action=str(request.get('action_name','')).upper(); args=request.get('arguments') or {}
     if tool!='LOCAL_LINUX_SAFE': raise ValueError('TOOL_NOT_IMPLEMENTED_BY_LINUX_EXECUTOR')
     return execute_voice_gateway_action(action,args)
 def once():
-    q=api('claim_tool_execution',node_id=NODE_ID)
+    q=api('claim_tool_execution')
     if not q.get('claimed'): return False
     request_id=q['request_id']; api('start_tool_execution',request_id=request_id)
-    evidence={'agent_id':AGENT_ID,'node_id':NODE_ID,'executor':EXECUTOR_VERSION,'tool_name':q.get('tool_name'),'action_name':q.get('action_name')}
+    evidence={'node_id':NODE_ID,'executor':EXECUTOR_VERSION,'tool_name':q.get('tool_name'),'action_name':q.get('action_name')}
     try:
         ok,detail=execute(q); evidence['detail']=detail
         digest=hashlib.sha256(json.dumps(evidence,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
@@ -52,10 +47,10 @@ def once():
         api('complete_tool_execution',request_id=request_id,ok=False,result_ref=None,evidence=evidence,error=str(exc)[:1000])
     return True
 def main():
-    if not KEY: raise RuntimeError('DAYONG_MCP_API_KEY is required')
+    if not TOKEN: raise RuntimeError('DAYONG_WORKER_TOKEN is required')
     while True:
         try: once()
-        except Exception as exc: print(f'linux-safe-executor error: {exc}',flush=True)
+        except Exception as exc: print(f'linux-safe-executor error: {type(exc).__name__}',flush=True)
         time.sleep(POLL_SECONDS)
 if __name__=='__main__': main()
 PY
@@ -63,15 +58,11 @@ chmod 0755 "$DST/runner.py"
 
 cat > "$DST/voice_gateway.py" <<'PY'
 #!/usr/bin/env python3
-import json, pathlib, subprocess, urllib.request, ssl
-SERVICE='dayong-voice'
-ENV_FILE=pathlib.Path('/opt/dayong-voice/dayong-voice.env')
-DROPIN_DIR=pathlib.Path('/etc/systemd/system/dayong-voice.service.d')
-RUNTIME_DROPIN=DROPIN_DIR/'runtime-env.conf'
-PYTHON='/opt/dayong-cabinet/venv/bin/python'
-SERVER='/opt/dayong-voice/server.py'
-HEALTH_URL='https://139.196.108.23/voice-test/api/health'
-INWORLD_URL='https://139.196.108.23/voice-test/api/inworld'
+import json,pathlib,subprocess,urllib.request,ssl
+SERVICE='dayong-voice'; ENV_FILE=pathlib.Path('/opt/dayong-voice/dayong-voice.env')
+DROPIN_DIR=pathlib.Path('/etc/systemd/system/dayong-voice.service.d'); RUNTIME_DROPIN=DROPIN_DIR/'runtime-env.conf'
+PYTHON='/opt/dayong-cabinet/venv/bin/python'; SERVER='/opt/dayong-voice/server.py'
+HEALTH_URL='https://139.196.108.23/voice-test/api/health'; INWORLD_URL='https://139.196.108.23/voice-test/api/inworld'
 def run(argv,timeout=60):
     p=subprocess.run(argv,capture_output=True,text=True,timeout=timeout,shell=False)
     return p.returncode==0,{'argv':argv,'returncode':p.returncode,'stdout':(p.stdout or '')[-8000:],'stderr':(p.stderr or '')[-8000:]}
@@ -96,14 +87,14 @@ def logs():
     return ok,d
 def http_json(url,method='GET',body=None,timeout=60):
     data=None if body is None else json.dumps(body,ensure_ascii=False).encode()
-    req=urllib.request.Request(url,data=data,headers={'content-type':'application/json','user-agent':'DAYONG-Linux-Safe-Executor/2'},method=method)
+    req=urllib.request.Request(url,data=data,headers={'content-type':'application/json','user-agent':'DAYONG-Linux-Safe-Executor/3'},method=method)
     with urllib.request.urlopen(req,timeout=timeout,context=ssl._create_unverified_context()) as r: return r.status,json.loads(r.read().decode())
 def acceptance(mode):
     hs,h=http_json(HEALTH_URL)
     if hs!=200 or not h.get('ok') or not h.get('inworld_queue'): return False,{'health':h,'stage':'HEALTH'}
     body={'text':f'你好，這是大用科技上海伺服器 {mode.capitalize()} 語音自動驗收測試。','agent':'D1','mode':mode,'session_id':f'linux-runner-{mode}-acceptance'}
     try: sc,res=http_json(INWORLD_URL,'POST',body,60)
-    except Exception as exc: return False,{'health':h,'stage':mode.upper(),'error':str(exc)[:1000]}
+    except Exception as exc: return False,{'health':h,'stage':mode.upper(),'error':type(exc).__name__}
     return sc==200 and bool(res),{'health':h,'stage':mode.upper(),'response':res,'http_status':sc}
 def execute_voice_gateway_action(action,args):
     del args
@@ -120,7 +111,7 @@ chmod 0644 "$DST/voice_gateway.py"
 
 cat > "/etc/systemd/system/${SERVICE}.service" <<'UNIT'
 [Unit]
-Description=DAYONG Linux Safe Executor v2
+Description=DAYONG Linux Safe Executor v3 worker transport
 After=network-online.target
 Wants=network-online.target
 [Service]
@@ -134,52 +125,64 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/etc/systemd/system/dayong-voice.service.d /opt/dayong-voice
+ReadWritePaths=/etc/systemd/system/dayong-voice.service.d /opt/dayong-voice /opt/dayong-command-seat/linux-runner
 [Install]
 WantedBy=multi-user.target
 UNIT
 
 RUNTIME_ENV="$DST/runtime.env"
-TMP_ENV="$(mktemp)"
-chmod 0600 "$TMP_ENV"
-printf 'DAYONG_NODE_ID=%s\n' "$NODE_ID" > "$TMP_ENV"
-extract_key_from_file(){
-  local f="$1" line value
-  [[ -r "$f" ]] || return 1
-  line="$(grep -m1 -E '^[[:space:]]*(export[[:space:]]+)?DAYONG_MCP_API_KEY=' "$f" 2>/dev/null || true)"
-  [[ -n "$line" ]] || return 1
-  value="${line#*=}"; value="${value%$'\r'}"
-  if [[ "$value" == \"*\" && "$value" == *\" ]]; then value="${value:1:${#value}-2}"; fi
-  if [[ "$value" == \'*\' && "$value" == *\' ]]; then value="${value:1:${#value}-2}"; fi
-  [[ -n "$value" ]] || return 1
-  printf 'DAYONG_MCP_API_KEY=%s\n' "$value" >> "$TMP_ENV"
-  return 0
-}
-KEY_FOUND=0
-if [[ -r "$RUNTIME_ENV" ]] && extract_key_from_file "$RUNTIME_ENV"; then KEY_FOUND=1; else
-  for candidate in /opt/dayong-cabinet/.env /opt/dayong-cabinet/runtime.env /opt/dayong-cabinet/dayong.env /opt/dayong-command-seat/runtime.env /etc/dayong/runtime.env /etc/dayong/command-seat.env /etc/default/dayong-command-seat /etc/sysconfig/dayong-command-seat; do
-    if extract_key_from_file "$candidate"; then KEY_FOUND=1; break; fi
-  done
-fi
-if [[ "$KEY_FOUND" -ne 1 ]]; then rm -f "$TMP_ENV"; echo 'BOOTSTRAP_BLOCKED credential_mount_missing' >&2; exit 21; fi
+TMP_ENV="$(mktemp)"; chmod 0600 "$TMP_ENV"; printf 'DAYONG_NODE_ID=%s\n' "$NODE_ID" > "$TMP_ENV"
+export WORKER_GATEWAY TMP_ENV NODE_ID
+python3 <<'PY'
+import glob,json,os,re,urllib.request
+url=os.environ['WORKER_GATEWAY']; out=os.environ['TMP_ENV']; node=os.environ['NODE_ID']
+candidates=[]; seen=set()
+def add(k,v):
+    if not v or len(v)<32 or v in seen: return
+    ku=k.upper()
+    if 'TOKEN' not in ku: return
+    if not any(x in ku for x in ('DAYONG','WORKER','NODE','EXTERNAL')): return
+    seen.add(v); candidates.append(v)
+for p in glob.glob('/proc/[0-9]*/environ'):
+    try:
+        for item in open(p,'rb').read().split(b'\0'):
+            if b'=' not in item: continue
+            k,v=item.split(b'=',1); add(k.decode(errors='ignore'),v.decode(errors='ignore'))
+    except Exception: pass
+for p in glob.glob('/opt/dayong*/**/*env*',recursive=True)+glob.glob('/etc/dayong/**/*',recursive=True)+glob.glob('/etc/default/*'):
+    try:
+        if not os.path.isfile(p) or os.path.getsize(p)>1024*1024: continue
+        for line in open(p,errors='ignore'):
+            m=re.match(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)\s*$',line)
+            if not m: continue
+            v=m.group(2).strip().strip('"\''); add(m.group(1),v)
+    except Exception: pass
+for token in candidates:
+    try:
+        req=urllib.request.Request(url,data=json.dumps({'action':'status'}).encode(),headers={'content-type':'application/json','x-worker-token':token},method='POST')
+        with urllib.request.urlopen(req,timeout=15) as r:
+            d=json.loads(r.read().decode())
+        w=d.get('worker') or {}
+        if d.get('ok') and (not w.get('node_id') or w.get('node_id')==node):
+            with open(out,'a') as f: f.write('DAYONG_WORKER_TOKEN='+token+'\n')
+            print('WORKER_CREDENTIAL_RECOVERED')
+            raise SystemExit(0)
+    except SystemExit: raise
+    except Exception: pass
+print('BOOTSTRAP_BLOCKED worker_credential_not_found')
+raise SystemExit(21)
+PY
 install -m 0600 "$TMP_ENV" "$RUNTIME_ENV"; rm -f "$TMP_ENV"
-
 python3 -m py_compile "$DST/runner.py" "$DST/voice_gateway.py"
-rollback(){
-  systemctl stop "$SERVICE" >/dev/null 2>&1 || true
-  if [[ -d "$BACKUP_DIR" ]]; then rm -rf "$DST"; install -d -m 0755 "$DST"; cp -a "$BACKUP_DIR/." "$DST/"; fi
-  systemctl daemon-reload >/dev/null 2>&1 || true
-}
+rollback(){ systemctl stop "$SERVICE" >/dev/null 2>&1 || true; if [[ -d "$BACKUP_DIR" ]]; then rm -rf "$DST"; install -d -m 0755 "$DST"; cp -a "$BACKUP_DIR/." "$DST/"; fi; systemctl daemon-reload >/dev/null 2>&1 || true; }
 trap 'rollback' ERR
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null
 systemctl restart "$SERVICE"
-sleep 3
+sleep 4
 systemctl is-active --quiet "$SERVICE"
-PID="$(systemctl show -p MainPID --value "$SERVICE")"
-[[ "$PID" =~ ^[0-9]+$ && "$PID" -gt 0 ]]
-tr '\0' '\n' < "/proc/$PID/environ" | grep -q '^DAYONG_MCP_API_KEY=.'
-RUNNER_SHA="$(sha256sum "$DST/runner.py" | awk '{print $1}')"
-VOICE_SHA="$(sha256sum "$DST/voice_gateway.py" | awk '{print $1}')"
+PID="$(systemctl show -p MainPID --value "$SERVICE")"; [[ "$PID" =~ ^[0-9]+$ && "$PID" -gt 0 ]]
+tr '\0' '\n' < "/proc/$PID/environ" | grep -q '^DAYONG_WORKER_TOKEN=.'
+RUNNER_SHA="$(sha256sum "$DST/runner.py" | awk '{print $1}')"; VOICE_SHA="$(sha256sum "$DST/voice_gateway.py" | awk '{print $1}')"
 trap - ERR
-printf 'DAYONG_SHANGHAI_BOOTSTRAP_PASS node=%s runner_sha=%s voice_sha=%s credential=present service=active\n' "$NODE_ID" "$RUNNER_SHA" "$VOICE_SHA"
+printf 'DAYONG_SHANGHAI_BOOTSTRAP_PASS node=%s runner_sha=%s voice_sha=%s credential=worker-token service=active\n' "$NODE_ID" "$RUNNER_SHA" "$VOICE_SHA"
