@@ -49,7 +49,8 @@ jobs:
           mkdir -p skill_output
           set +e
           skill-seekers create work/source.mp4 --name fb-reel-learning \
-            --output skill_output/fb-reel-learning --whisper-model tiny \
+            --output skill_output/fb-reel-learning --whisper-model small \
+            --languages zh,en --enhance-level 0 \
             > evidence/skill_seekers.log 2>&1
           rc=$?
           if [ "$rc" -eq 0 ] && test -f skill_output/fb-reel-learning/SKILL.md; then
