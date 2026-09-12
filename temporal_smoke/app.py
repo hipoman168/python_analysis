@@ -1,76 +1,46 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+from temporalio.api.workflowservice.v1 import (
+    DescribeWorkerDeploymentRequest,
+    SetWorkerDeploymentCurrentVersionRequest,
+    SetWorkerDeploymentManagerRequest,
+)
+from temporalio.common import WorkerDeploymentVersion
 from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
+from temporalio.worker import WorkerDeploymentConfig
 
-from activities import execute_governed_job
-from models import DayongJob
-from workflow_defs import DayongJobWorkflow
-
-SOURCE_COMMIT = "ee93b76e5e7de0f2121d246c7654e89960608053"
-STATE = {"status": "STARTING", "source_commit": SOURCE_COMMIT, "detail": None}
+STATE = {"status": "STARTING", "detail": None}
 
 
 def emit_result() -> None:
-    print("TEMPORAL_SMOKE_RESULT=" + json.dumps(STATE, ensure_ascii=False, sort_keys=True), flush=True)
+    print("TEMPORAL_VERSIONING_INTROSPECT=" + json.dumps(STATE, ensure_ascii=False, sort_keys=True), flush=True)
 
 
-async def run_smoke() -> None:
+def proto_fields(cls):
+    return [f.name for f in cls.DESCRIPTOR.fields]
+
+
+async def run_probe() -> None:
     try:
         async with await WorkflowEnvironment.start_local() as env:
-            async with Worker(
-                env.client,
-                task_queue="dayong-smoke",
-                workflows=[DayongJobWorkflow],
-                activities=[execute_governed_job],
-            ):
-                job = DayongJob(
-                    job_id="SMOKE-TEMPORAL-DUP-001",
-                    project_key="TEMPORAL_CORE",
-                    action="NODE_FUNCTIONAL_PROBE",
-                    authority_generation=1,
-                    iwu_id="IWU-SMOKE-DUP-001",
-                    payload={"mode": "duplicate_guard", "evidence_required": True},
-                )
-                workflow_id = "dayong-smoke-temporal-duplicate-001"
-                handle = await env.client.start_workflow(
-                    DayongJobWorkflow.run,
-                    job,
-                    id=workflow_id,
-                    task_queue="dayong-smoke",
-                )
-
-                duplicate_error = None
-                try:
-                    await env.client.start_workflow(
-                        DayongJobWorkflow.run,
-                        job,
-                        id=workflow_id,
-                        task_queue="dayong-smoke",
-                    )
-                except Exception as exc:
-                    duplicate_error = type(exc).__name__
-
-                result = await asyncio.wait_for(handle.result(), timeout=30)
-                if duplicate_error != "WorkflowAlreadyStartedError":
-                    raise RuntimeError(f"DUPLICATE_GUARD_NOT_ENFORCED:{duplicate_error}")
-
-                STATE["status"] = "PASS"
-                STATE["detail"] = {
-                    "job_id": result.job_id,
-                    "state": result.state,
-                    "workflow_id": workflow_id,
-                    "duplicate_submission": "REJECTED",
-                    "duplicate_error": duplicate_error,
-                    "evidence": result.evidence,
-                }
-                emit_result()
+            STATE["status"] = "PASS"
+            STATE["detail"] = {
+                "worker_deployment_config_signature": str(inspect.signature(WorkerDeploymentConfig)),
+                "worker_deployment_version_signature": str(inspect.signature(WorkerDeploymentVersion)),
+                "describe_fields": proto_fields(DescribeWorkerDeploymentRequest),
+                "set_current_fields": proto_fields(SetWorkerDeploymentCurrentVersionRequest),
+                "set_manager_fields": proto_fields(SetWorkerDeploymentManagerRequest),
+                "namespace": env.client.namespace,
+                "identity": env.client.identity,
+            }
+            emit_result()
     except Exception as exc:
         STATE["status"] = "FAIL"
         STATE["detail"] = {"error": type(exc).__name__, "message": str(exc)}
@@ -91,5 +61,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    threading.Thread(target=lambda: asyncio.run(run_smoke()), daemon=True).start()
+    threading.Thread(target=lambda: asyncio.run(run_probe()), daemon=True).start()
     HTTPServer(("0.0.0.0", int(os.environ.get("PORT", "10000"))), Handler).serve_forever()
