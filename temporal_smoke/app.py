@@ -13,7 +13,7 @@ from activities import execute_governed_job
 from models import DayongJob
 from workflow_defs import DayongJobWorkflow
 
-SOURCE_COMMIT = "d5728f543b522fa3b3e641087c21b6bc55b50c44"
+SOURCE_COMMIT = "f5e1783f469e5d6d74cb2d50b72ab4a9c4e39752"
 STATE = {"status": "STARTING", "source_commit": SOURCE_COMMIT, "detail": None}
 
 
@@ -31,17 +31,21 @@ async def run_smoke() -> None:
                 activities=[execute_governed_job],
             ):
                 job = DayongJob(
-                    job_id="SMOKE-TEMPORAL-001",
+                    job_id="SMOKE-TEMPORAL-RETRY-001",
                     project_key="TEMPORAL_CORE",
                     action="NODE_FUNCTIONAL_PROBE",
                     authority_generation=1,
-                    iwu_id="IWU-SMOKE-001",
-                    payload={"mode": "smoke", "evidence_required": True},
+                    iwu_id="IWU-SMOKE-RETRY-001",
+                    payload={
+                        "mode": "retry_fault_injection",
+                        "evidence_required": True,
+                        "fail_until_attempt": 1,
+                    },
                 )
                 result = await env.client.execute_workflow(
                     DayongJobWorkflow.run,
                     job,
-                    id="dayong-smoke-temporal-core-001",
+                    id="dayong-smoke-temporal-retry-001",
                     task_queue="dayong-smoke",
                 )
                 STATE["status"] = "PASS"
