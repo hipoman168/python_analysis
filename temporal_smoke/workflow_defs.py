@@ -5,7 +5,7 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
-from .models import DayongJob, DayongResult
+from models import DayongJob, DayongResult
 
 
 @workflow.defn(name="DAYONG.JobWorkflow")
