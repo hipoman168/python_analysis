@@ -4,17 +4,16 @@ import asyncio
 import json
 import os
 import threading
-from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
-from activities import FIRST_ATTEMPT_STARTED, execute_governed_job
+from activities import execute_governed_job
 from models import DayongJob
 from workflow_defs import DayongJobWorkflow
 
-SOURCE_COMMIT = "f5e1783f469e5d6d74cb2d50b72ab4a9c4e39752"
+SOURCE_COMMIT = "ee93b76e5e7de0f2121d246c7654e89960608053"
 STATE = {"status": "STARTING", "source_commit": SOURCE_COMMIT, "detail": None}
 
 
@@ -25,55 +24,53 @@ def emit_result() -> None:
 async def run_smoke() -> None:
     try:
         async with await WorkflowEnvironment.start_local() as env:
-            worker1 = Worker(
+            async with Worker(
                 env.client,
                 task_queue="dayong-smoke",
                 workflows=[DayongJobWorkflow],
                 activities=[execute_governed_job],
-                graceful_shutdown_timeout=timedelta(seconds=2),
-            )
-            worker1_task = asyncio.create_task(worker1.run())
+            ):
+                job = DayongJob(
+                    job_id="SMOKE-TEMPORAL-DUP-001",
+                    project_key="TEMPORAL_CORE",
+                    action="NODE_FUNCTIONAL_PROBE",
+                    authority_generation=1,
+                    iwu_id="IWU-SMOKE-DUP-001",
+                    payload={"mode": "duplicate_guard", "evidence_required": True},
+                )
+                workflow_id = "dayong-smoke-temporal-duplicate-001"
+                handle = await env.client.start_workflow(
+                    DayongJobWorkflow.run,
+                    job,
+                    id=workflow_id,
+                    task_queue="dayong-smoke",
+                )
 
-            job = DayongJob(
-                job_id="SMOKE-TEMPORAL-HANDOFF-001",
-                project_key="TEMPORAL_CORE",
-                action="NODE_FUNCTIONAL_PROBE",
-                authority_generation=1,
-                iwu_id="IWU-SMOKE-HANDOFF-001",
-                payload={
-                    "mode": "worker_handoff",
-                    "evidence_required": True,
-                },
-            )
-            handle = await env.client.start_workflow(
-                DayongJobWorkflow.run,
-                job,
-                id="dayong-smoke-temporal-handoff-001",
-                task_queue="dayong-smoke",
-            )
+                duplicate_error = None
+                try:
+                    await env.client.start_workflow(
+                        DayongJobWorkflow.run,
+                        job,
+                        id=workflow_id,
+                        task_queue="dayong-smoke",
+                    )
+                except Exception as exc:
+                    duplicate_error = type(exc).__name__
 
-            await asyncio.wait_for(FIRST_ATTEMPT_STARTED.wait(), timeout=15)
-            STATE["detail"] = {"phase": "worker1_started_then_shutdown"}
-            await worker1.shutdown()
-            await worker1_task
-
-            worker2 = Worker(
-                env.client,
-                task_queue="dayong-smoke",
-                workflows=[DayongJobWorkflow],
-                activities=[execute_governed_job],
-            )
-            async with worker2:
                 result = await asyncio.wait_for(handle.result(), timeout=30)
+                if duplicate_error != "WorkflowAlreadyStartedError":
+                    raise RuntimeError(f"DUPLICATE_GUARD_NOT_ENFORCED:{duplicate_error}")
 
-            STATE["status"] = "PASS"
-            STATE["detail"] = {
-                "job_id": result.job_id,
-                "state": result.state,
-                "handoff": "worker1_shutdown_to_worker2",
-                "evidence": result.evidence,
-            }
-            emit_result()
+                STATE["status"] = "PASS"
+                STATE["detail"] = {
+                    "job_id": result.job_id,
+                    "state": result.state,
+                    "workflow_id": workflow_id,
+                    "duplicate_submission": "REJECTED",
+                    "duplicate_error": duplicate_error,
+                    "evidence": result.evidence,
+                }
+                emit_result()
     except Exception as exc:
         STATE["status"] = "FAIL"
         STATE["detail"] = {"error": type(exc).__name__, "message": str(exc)}
