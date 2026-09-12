@@ -1,79 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import threading
-from dataclasses import dataclass
-from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
 
-from temporalio import activity, workflow
-from temporalio.common import RetryPolicy
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
+from activities import execute_governed_job
+from models import DayongJob
+from workflow_defs import DayongJobWorkflow
+
 SOURCE_COMMIT = "d5728f543b522fa3b3e641087c21b6bc55b50c44"
 STATE = {"status": "STARTING", "source_commit": SOURCE_COMMIT, "detail": None}
-
-
-@dataclass
-class DayongJob:
-    job_id: str
-    project_key: str
-    action: str
-    authority_generation: int
-    iwu_id: str
-    payload: dict[str, Any]
-
-
-@dataclass
-class DayongResult:
-    job_id: str
-    state: str
-    evidence: dict[str, Any]
-
-
-@activity.defn(name="DAYONG.ExecuteGovernedJob")
-async def execute_governed_job(job: DayongJob) -> dict[str, Any]:
-    allowed = {"MEDIA_PIPELINE_EXECUTE", "NODE_FUNCTIONAL_PROBE", "REPAIR_NODE"}
-    if job.action not in allowed:
-        raise ValueError(f"ACTION_NOT_ALLOWED:{job.action}")
-    if job.authority_generation < 1:
-        raise ValueError("INVALID_AUTHORITY_GENERATION")
-    activity.heartbeat({"phase": "accepted", "job_id": job.job_id})
-    return {
-        "job_id": job.job_id,
-        "project_key": job.project_key,
-        "action": job.action,
-        "authority_generation": job.authority_generation,
-        "iwu_id": job.iwu_id,
-        "worker_identity": os.environ.get("DAYONG_WORKER_ID", "unknown"),
-        "payload_digest": hashlib.sha256(
-            json.dumps(job.payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest(),
-    }
-
-
-@workflow.defn(name="DAYONG.JobWorkflow")
-class DayongJobWorkflow:
-    @workflow.run
-    async def run(self, job: DayongJob) -> DayongResult:
-        evidence = await workflow.execute_activity(
-            "DAYONG.ExecuteGovernedJob",
-            job,
-            start_to_close_timeout=timedelta(minutes=2),
-            heartbeat_timeout=timedelta(seconds=20),
-            retry_policy=RetryPolicy(
-                initial_interval=timedelta(seconds=1),
-                backoff_coefficient=2.0,
-                maximum_interval=timedelta(seconds=10),
-                maximum_attempts=3,
-            ),
-        )
-        return DayongResult(job_id=job.job_id, state="COMPLETED", evidence=evidence)
 
 
 async def run_smoke() -> None:
