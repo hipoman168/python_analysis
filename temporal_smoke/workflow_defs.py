@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import timedelta
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
+from temporalio.common import RetryPolicy, VersioningBehavior
 
 from models import DayongJob, DayongResult
 
 
-@workflow.defn(name="DAYONG.JobWorkflow")
+@workflow.defn(name="DAYONG.JobWorkflow", versioning_behavior=VersioningBehavior.PINNED)
 class DayongJobWorkflow:
     @workflow.run
     async def run(self, job: DayongJob) -> DayongResult:
