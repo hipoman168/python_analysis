@@ -7,7 +7,7 @@ from typing import Any
 
 from temporalio import activity
 
-from .models import DayongJob
+from models import DayongJob
 
 
 @activity.defn(name="DAYONG.ExecuteGovernedJob")
