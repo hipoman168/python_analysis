@@ -6,126 +6,72 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from temporalio.api.workflowservice.v1 import (
-    DescribeWorkerDeploymentRequest,
-    SetWorkerDeploymentCurrentVersionRequest,
-)
-from temporalio.common import VersioningBehavior, WorkerDeploymentVersion
 from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker, WorkerDeploymentConfig
+from temporalio.worker import Worker
 
-from activities import execute_governed_job_v1, execute_governed_job_v2
-from models import DayongJob
-from workflow_defs import DayongJobWorkflow
+from workflow_defs import DurableResumeWorkflow
 
 STATE = {"status": "STARTING", "detail": None}
-DEPLOYMENT_NAME = "dayong-smoke-deployment"
-TASK_QUEUE = "dayong-smoke-versioned"
-V1 = WorkerDeploymentVersion(deployment_name=DEPLOYMENT_NAME, build_id="v1")
-V2 = WorkerDeploymentVersion(deployment_name=DEPLOYMENT_NAME, build_id="v2")
+TASK_QUEUE = "dayong-durable-restart"
+WORKFLOW_ID = "dayong-durable-restart-001"
 
 
 def emit_result() -> None:
-    print("TEMPORAL_VERSIONING_RESULT=" + json.dumps(STATE, ensure_ascii=False, sort_keys=True), flush=True)
-
-
-async def describe(client):
-    return await client.workflow_service.describe_worker_deployment(
-        DescribeWorkerDeploymentRequest(namespace=client.namespace, deployment_name=DEPLOYMENT_NAME)
-    )
-
-
-async def set_current(client, version: WorkerDeploymentVersion) -> None:
-    desc = await describe(client)
-    await client.workflow_service.set_worker_deployment_current_version(
-        SetWorkerDeploymentCurrentVersionRequest(
-            namespace=client.namespace,
-            deployment_name=DEPLOYMENT_NAME,
-            version=version.to_canonical_string(),
-            conflict_token=desc.conflict_token,
-            identity=client.identity,
-            ignore_missing_task_queues=False,
-            allow_no_pollers=False,
-        )
-    )
-
-
-async def run_job(client, suffix: str) -> str:
-    job = DayongJob(
-        job_id=f"SMOKE-VERSION-{suffix}",
-        project_key="TEMPORAL_CORE",
-        action="NODE_FUNCTIONAL_PROBE",
-        authority_generation=1,
-        iwu_id=f"IWU-VERSION-{suffix}",
-        payload={"phase": suffix, "evidence_required": True},
-    )
-    result = await client.execute_workflow(
-        DayongJobWorkflow.run,
-        job,
-        id=f"dayong-versioning-{suffix}",
-        task_queue=TASK_QUEUE,
-    )
-    return str(result.evidence.get("code_version"))
+    print("TEMPORAL_RESTART_RESULT=" + json.dumps(STATE, ensure_ascii=False, sort_keys=True), flush=True)
 
 
 async def run_probe() -> None:
+    db_path = f"/tmp/dayong-temporal-persist-{os.getpid()}.db"
     try:
-        async with await WorkflowEnvironment.start_local() as env:
-            worker1 = Worker(
-                env.client,
-                task_queue=TASK_QUEUE,
-                workflows=[DayongJobWorkflow],
-                activities=[execute_governed_job_v1],
-                deployment_config=WorkerDeploymentConfig(
-                    version=V1,
-                    use_worker_versioning=True,
-                    default_versioning_behavior=VersioningBehavior.PINNED,
-                ),
-            )
-            worker2 = Worker(
-                env.client,
-                task_queue=TASK_QUEUE,
-                workflows=[DayongJobWorkflow],
-                activities=[execute_governed_job_v2],
-                deployment_config=WorkerDeploymentConfig(
-                    version=V2,
-                    use_worker_versioning=True,
-                    default_versioning_behavior=VersioningBehavior.PINNED,
-                ),
-            )
-            t1 = asyncio.create_task(worker1.run())
-            t2 = asyncio.create_task(worker2.run())
-            await asyncio.sleep(2)
+        if os.path.exists(db_path):
+            os.remove(db_path)
 
-            await set_current(env.client, V1)
-            phase_v1 = await run_job(env.client, "v1-current")
-            await set_current(env.client, V2)
-            phase_v2 = await run_job(env.client, "v2-current")
-            await set_current(env.client, V1)
-            phase_rollback = await run_job(env.client, "rollback-v1")
+        env1 = await WorkflowEnvironment.start_local(dev_server_database_filename=db_path)
+        worker1 = Worker(env1.client, task_queue=TASK_QUEUE, workflows=[DurableResumeWorkflow])
+        worker1_task = asyncio.create_task(worker1.run())
 
-            await worker1.shutdown()
-            await worker2.shutdown()
-            await t1
-            await t2
+        await env1.client.start_workflow(
+            DurableResumeWorkflow.run,
+            "PERSISTENCE-MARKER-001",
+            id=WORKFLOW_ID,
+            task_queue=TASK_QUEUE,
+        )
+        await asyncio.sleep(1)
 
-            if [phase_v1, phase_v2, phase_rollback] != ["v1", "v2", "v1"]:
-                raise RuntimeError(f"VERSION_ROUTING_MISMATCH:{phase_v1},{phase_v2},{phase_rollback}")
+        await worker1.shutdown()
+        await worker1_task
+        await env1.shutdown()
 
-            STATE["status"] = "PASS"
-            STATE["detail"] = {
-                "deployment": DEPLOYMENT_NAME,
-                "sequence": [
-                    {"current": "v1", "executed_by": phase_v1},
-                    {"current": "v2", "executed_by": phase_v2},
-                    {"rollback_current": "v1", "executed_by": phase_rollback},
-                ],
-                "result": "V1_TO_V2_TO_V1_ROLLBACK_PASS",
-            }
-            emit_result()
+        if not os.path.exists(db_path):
+            raise RuntimeError("PERSISTENCE_DB_NOT_CREATED")
+
+        env2 = await WorkflowEnvironment.start_local(dev_server_database_filename=db_path)
+        worker2 = Worker(env2.client, task_queue=TASK_QUEUE, workflows=[DurableResumeWorkflow])
+        worker2_task = asyncio.create_task(worker2.run())
+
+        handle2 = env2.client.get_workflow_handle(WORKFLOW_ID)
+        await handle2.signal(DurableResumeWorkflow.release)
+        result = await asyncio.wait_for(handle2.result(), timeout=30)
+
+        await worker2.shutdown()
+        await worker2_task
+        await env2.shutdown()
+
+        if result.get("state") != "RESUMED_AFTER_SERVER_RESTART":
+            raise RuntimeError(f"UNEXPECTED_RESULT:{result}")
+
+        STATE["status"] = "PASS"
+        STATE["detail"] = {
+            "workflow_id": WORKFLOW_ID,
+            "database_file": db_path,
+            "server_restart": "A_TO_B",
+            "workflow_recreated": False,
+            "result": result,
+        }
+        emit_result()
     except Exception as exc:
         STATE["status"] = "FAIL"
-        STATE["detail"] = {"error": type(exc).__name__, "message": str(exc)}
+        STATE["detail"] = {"error": type(exc).__name__, "message": str(exc), "database_file": db_path}
         emit_result()
 
 
