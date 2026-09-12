@@ -17,7 +17,14 @@ async def execute_governed_job(job: DayongJob) -> dict[str, Any]:
         raise ValueError(f"ACTION_NOT_ALLOWED:{job.action}")
     if job.authority_generation < 1:
         raise ValueError("INVALID_AUTHORITY_GENERATION")
-    activity.heartbeat({"phase": "accepted", "job_id": job.job_id})
+
+    info = activity.info()
+    activity.heartbeat({"phase": "accepted", "job_id": job.job_id, "attempt": info.attempt})
+
+    fail_until = int(job.payload.get("fail_until_attempt", 0) or 0)
+    if info.attempt <= fail_until:
+        raise RuntimeError(f"FAULT_INJECTION_TRANSIENT_ATTEMPT_{info.attempt}")
+
     return {
         "job_id": job.job_id,
         "project_key": job.project_key,
@@ -25,6 +32,7 @@ async def execute_governed_job(job: DayongJob) -> dict[str, Any]:
         "authority_generation": job.authority_generation,
         "iwu_id": job.iwu_id,
         "worker_identity": os.environ.get("DAYONG_WORKER_ID", "unknown"),
+        "attempt": info.attempt,
         "payload_digest": hashlib.sha256(
             json.dumps(job.payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest(),
