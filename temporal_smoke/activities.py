@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -8,6 +9,8 @@ from typing import Any
 from temporalio import activity
 
 from models import DayongJob
+
+FIRST_ATTEMPT_STARTED = asyncio.Event()
 
 
 @activity.defn(name="DAYONG.ExecuteGovernedJob")
@@ -20,6 +23,14 @@ async def execute_governed_job(job: DayongJob) -> dict[str, Any]:
 
     info = activity.info()
     activity.heartbeat({"phase": "accepted", "job_id": job.job_id, "attempt": info.attempt})
+
+    mode = str(job.payload.get("mode", ""))
+    if mode == "worker_handoff" and info.attempt == 1:
+        FIRST_ATTEMPT_STARTED.set()
+        while not activity.is_worker_shutdown():
+            activity.heartbeat({"phase": "worker1_running", "job_id": job.job_id, "attempt": info.attempt})
+            await asyncio.sleep(0.2)
+        raise RuntimeError("FAULT_INJECTION_WORKER1_SHUTDOWN")
 
     fail_until = int(job.payload.get("fail_until_attempt", 0) or 0)
     if info.attempt <= fail_until:
