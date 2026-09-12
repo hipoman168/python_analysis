@@ -17,6 +17,10 @@ SOURCE_COMMIT = "d5728f543b522fa3b3e641087c21b6bc55b50c44"
 STATE = {"status": "STARTING", "source_commit": SOURCE_COMMIT, "detail": None}
 
 
+def emit_result() -> None:
+    print("TEMPORAL_SMOKE_RESULT=" + json.dumps(STATE, ensure_ascii=False, sort_keys=True), flush=True)
+
+
 async def run_smoke() -> None:
     try:
         async with await WorkflowEnvironment.start_local() as env:
@@ -46,9 +50,11 @@ async def run_smoke() -> None:
                     "state": result.state,
                     "evidence": result.evidence,
                 }
+                emit_result()
     except Exception as exc:
         STATE["status"] = "FAIL"
         STATE["detail"] = {"error": type(exc).__name__, "message": str(exc)}
+        emit_result()
 
 
 class Handler(BaseHTTPRequestHandler):
