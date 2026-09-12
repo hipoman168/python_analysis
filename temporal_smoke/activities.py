@@ -32,6 +32,10 @@ async def execute_governed_job(job: DayongJob) -> dict[str, Any]:
             await asyncio.sleep(0.2)
         raise RuntimeError("FAULT_INJECTION_WORKER1_SHUTDOWN")
 
+    if mode == "duplicate_guard":
+        activity.heartbeat({"phase": "duplicate_guard_holding", "job_id": job.job_id, "attempt": info.attempt})
+        await asyncio.sleep(2)
+
     fail_until = int(job.payload.get("fail_until_attempt", 0) or 0)
     if info.attempt <= fail_until:
         raise RuntimeError(f"FAULT_INJECTION_TRANSIENT_ATTEMPT_{info.attempt}")
