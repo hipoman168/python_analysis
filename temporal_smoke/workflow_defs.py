@@ -25,3 +25,18 @@ class DayongJobWorkflow:
             ),
         )
         return DayongResult(job_id=job.job_id, state="COMPLETED", evidence=evidence)
+
+
+@workflow.defn(name="DAYONG.DurableResumeWorkflow")
+class DurableResumeWorkflow:
+    def __init__(self) -> None:
+        self._released = False
+
+    @workflow.signal
+    async def release(self) -> None:
+        self._released = True
+
+    @workflow.run
+    async def run(self, marker: str) -> dict[str, str]:
+        await workflow.wait_condition(lambda: self._released)
+        return {"marker": marker, "state": "RESUMED_AFTER_SERVER_RESTART"}
