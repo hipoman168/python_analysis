@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DAYONG AI TV｜內部試片中心</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#0b0d10;color:#f4f6f8}
+*{box-sizing:border-box}body{margin:0;background:#0b0d10}.wrap{max-width:980px;margin:auto;padding:18px}
+header{position:sticky;top:0;background:rgba(11,13,16,.92);backdrop-filter:blur(14px);padding:14px 0 10px;z-index:5}
+h1{font-size:23px;margin:0 0 5px}.sub{color:#9ca6b2;font-size:13px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:16px}
+.card{background:#151920;border:1px solid #252b34;border-radius:16px;overflow:hidden}.card video{width:100%;aspect-ratio:9/16;background:#050607;display:block;max-height:560px}
+.meta{padding:13px}.tag{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;background:#232a34;color:#cfd6df;margin-right:6px}
+.title{font-size:17px;font-weight:700;margin:10px 0 5px}.id{font:12px ui-monospace,monospace;color:#8b96a3;word-break:break-all}
+.actions{display:flex;gap:8px;margin-top:12px}.btn{flex:1;border:0;border-radius:10px;padding:10px;font-weight:700}.pass{background:#e7f7ed}.revise{background:#ffe7e7}
+.pending{padding:28px 16px;text-align:center;color:#98a2ae;min-height:220px;display:flex;align-items:center;justify-content:center;background:#101318}
+footer{color:#697481;font-size:12px;text-align:center;padding:26px 0}
+</style>
+</head><body><div class="wrap">
+<header><h1>DAYONG AI TV｜內部試片中心</h1><div class="sub">P0 Internal Review · 手機看片 / PASS / REVISE</div></header>
+<div class="grid">
+<section class="card"><video controls playsinline preload="metadata" src="assets/SPORTS-KAWHI-T08-V1.mp4"></video><div class="meta">
+<span class="tag">AI 運動</span><span class="tag">球星</span><div class="title">Kawhi 測試片 V1</div><div class="id">SPORTS-KAWHI-T08-30S-V1</div>
+<div class="actions"><button class="btn pass" onclick="vote(this,'PASS')">PASS</button><button class="btn revise" onclick="vote(this,'REVISE')">要求修改</button></div></div></section>
+<section class="card"><video controls playsinline preload="metadata" src="assets/JP-GONPACHI-V3.mp4"></video><div class="meta">
+<span class="tag">日本好好玩</span><span class="tag">餐廳</span><div class="title">權八 Gonpachi V3</div><div class="id">JP-GONPACHI-AITV-HANDOFF</div>
+<div class="actions"><button class="btn pass" onclick="vote(this,'PASS')">PASS</button><button class="btn revise" onclick="vote(this,'REVISE')">要求修改</button></div></div></section>
+<section class="card"><video controls playsinline preload="metadata" src="assets/JP-KYOTO-V3.mp4"></video><div class="meta">
+<span class="tag">日本好好玩</span><span class="tag">京都</span><div class="title">京都五景測試 V3</div><div class="id">JP-KYOTO-30S-AITV-V2</div>
+<div class="actions"><button class="btn pass" onclick="vote(this,'PASS')">PASS</button><button class="btn revise" onclick="vote(this,'REVISE')">要求修改</button></div></div></section><section class="card"><div class="pending">台北好好玩｜尚未在二號機找到首批 Final Master</div><div class="meta"><span class="tag">台北好好玩</span><div class="title">等待 AI 電視台回件</div><div class="id">STATUS: WAITING_FOR_MASTER</div></div></section>
+<section class="card"><div class="pending">中國好好玩｜尚未在二號機找到首批 Final Master</div><div class="meta"><span class="tag">中國好好玩</span><div class="title">等待 AI 電視台回件</div><div class="id">STATUS: WAITING_FOR_MASTER</div></div></section>
+<section class="card"><div class="pending">AI 娛樂／明星｜目前未找到獨立娛樂成片；Kawhi 已作為球星測試片</div><div class="meta"><span class="tag">AI 娛樂</span><div class="title">等待獨立娛樂首片</div><div class="id">STATUS: WAITING_FOR_MASTER</div></div></section>
+</div>
+<footer>DAYONG Media Portal · Internal Review P0</footer>
+</div>
+<script>
+function vote(btn,state){
+ const card=btn.closest('.card'); const id=card.querySelector('.id').textContent;
+ localStorage.setItem('review:'+id,state); btn.parentElement.querySelectorAll('button').forEach(b=>b.style.opacity='.45'); btn.style.opacity='1';
+ alert(id+' → '+state+'（P0 已記錄於本機瀏覽器；正式版將寫回資料庫）');
+}
+document.querySelectorAll('.card').forEach(card=>{const id=card.querySelector('.id');if(!id)return;const s=localStorage.getItem('review:'+id.textContent);if(s){const b=[...card.querySelectorAll('button')].find(x=>x.textContent.includes(s==='PASS'?'PASS':'修改'));if(b){b.parentElement.querySelectorAll('button').forEach(x=>x.style.opacity='.45');b.style.opacity='1'}}});
+</script>
+</body></html>
