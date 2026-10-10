@@ -7,6 +7,7 @@ DB = os.getenv('GATEWAY_DB','./gateway.db')
 NODE_TOKEN = os.getenv('NODE_TOKEN','')
 ADMIN_TOKEN = os.getenv('ADMIN_TOKEN','')
 D2_READ_TOKEN = os.getenv('D2_READ_TOKEN','')
+D2_READ_TOKEN = os.getenv('D2_READ_TOKEN','')
 app = FastAPI(title='DAYONG AgentOS Outbound Gateway', version='0.0.6')
 
 def init():
@@ -23,6 +24,10 @@ class Result(BaseModel):
     task_id: str
     status: str
     evidence: dict
+
+def read_auth(authorization):
+    if not authorization or not any(t and secrets.compare_digest(authorization, 'Bearer '+t) for t in (ADMIN_TOKEN,D2_READ_TOKEN)):
+        raise HTTPException(401, 'Unauthorized')
 
 def read_auth(authorization):
     if not authorization or not any(t and secrets.compare_digest(authorization, 'Bearer '+t) for t in (ADMIN_TOKEN,D2_READ_TOKEN)):
@@ -72,6 +77,15 @@ def get_job(task_id:str, authorization:str|None=Header(None)):
     with sqlite3.connect(DB) as c: row=c.execute('SELECT task_id,node_id,skill,status,evidence FROM jobs WHERE task_id=?',(task_id,)).fetchone()
     if not row: raise HTTPException(404,'Not found')
     return dict(zip(['task_id','node_id','skill','status','evidence'],[row[0],row[1],row[2],row[3],json.loads(row[4]) if row[4] else None]))
+
+@app.get('/v1/jobs/{task_id}/evidence')
+def get_evidence(task_id:str, authorization:str|None=Header(None)):
+    read_auth(authorization)
+    with sqlite3.connect(DB) as c:
+        row=c.execute('SELECT evidence FROM jobs WHERE task_id=?',(task_id,)).fetchone()
+    if not row: raise HTTPException(404,'Task not found')
+    if not row[0]: raise HTTPException(404,'Evidence not yet available')
+    return json.loads(row[0])
 
 @app.get('/v1/jobs/{task_id}/evidence')
 def get_evidence(task_id:str, authorization:str|None=Header(None)):
