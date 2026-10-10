@@ -34,3 +34,7 @@ jobs:
               assert Path(path).is_file(), path
           print('STATIC_CHECK_PASS')
           PY
+      - name: Install gateway test dependencies
+        run: python -m pip install -r agentos_gateway/requirements.txt
+      - name: Run isolated gateway contract tests
+        run: python -m unittest agentos_gateway.test_gateway_contract_v014 -v
