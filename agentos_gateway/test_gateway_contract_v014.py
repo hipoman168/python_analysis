@@ -27,6 +27,12 @@ class GatewayContract(unittest.TestCase):
         sys.modules.pop("agentos_gateway.gateway", None)
         self.gateway = importlib.import_module("agentos_gateway.gateway")
         self.client = TestClient(self.gateway.app)
+        self.addCleanup(self.client.close)
+        self.addCleanup(self._release_gateway_module)
+
+    def _release_gateway_module(self):
+        sys.modules.pop("agentos_gateway.gateway", None)
+        self.gateway = None
 
     def auth(self, token):
         return {"Authorization": "Bearer " + token}
