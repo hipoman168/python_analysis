@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 class GatewayContract(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self._cleanup_tmp)
         self.env = patch.dict(os.environ, {
             "GATEWAY_DB": str(Path(self.tmp.name) / "test.db"),
             "NODE_TOKEN": "unit-node-token",
@@ -29,6 +29,11 @@ class GatewayContract(unittest.TestCase):
         self.client = TestClient(self.gateway.app)
         self.addCleanup(self.client.close)
         self.addCleanup(self._release_gateway_module)
+
+    def _cleanup_tmp(self):
+        import gc
+        gc.collect()
+        self.tmp.cleanup()
 
     def _release_gateway_module(self):
         sys.modules.pop("agentos_gateway.gateway", None)
