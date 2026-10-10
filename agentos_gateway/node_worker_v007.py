@@ -1,5 +1,6 @@
 """DAYONG Node-02 outbound claim worker v0.0.7. One-shot, no polling."""
 import os, json, hashlib, socket, platform, datetime, httpx
+from pathlib import Path
 
 def main():
     gateway=os.environ["CLOUD_GATEWAY_URL"].rstrip("/")
@@ -20,6 +21,12 @@ def main():
         canonical=json.dumps(payload,sort_keys=True,ensure_ascii=False,separators=(",",":")).encode()
         sha256=hashlib.sha256(canonical).hexdigest()
         evidence={"payload":payload,"sha256":sha256,"size_bytes":len(canonical)}
+        evidence_dir=Path(os.getenv('EVIDENCE_DIR',r'C:\DAYONG_AI\agentos\evidence'))
+        evidence_dir.mkdir(parents=True,exist_ok=True)
+        evidence_file=evidence_dir / (task_id.replace('/','_').replace('\\','_')+'-evidence.json')
+        temp_file=evidence_file.with_suffix('.json.tmp')
+        temp_file.write_text(json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf-8')
+        temp_file.replace(evidence_file)
         result=client.post(f"{gateway}/v1/nodes/{node}/result",json={"task_id":task_id,"status":"PASS","evidence":evidence})
         result.raise_for_status()
         print(json.dumps({"task_id":task_id,"sha256":sha256,"gateway_result":result.json()},ensure_ascii=False))

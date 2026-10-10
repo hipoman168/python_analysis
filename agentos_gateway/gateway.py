@@ -7,7 +7,7 @@ DB = os.getenv('GATEWAY_DB','./gateway.db')
 NODE_TOKEN = os.getenv('NODE_TOKEN','')
 ADMIN_TOKEN = os.getenv('ADMIN_TOKEN','')
 D2_READ_TOKEN = os.getenv('D2_READ_TOKEN','')
-app = FastAPI(title='DAYONG AgentOS Outbound Gateway', version='0.0.6')
+app = FastAPI(title='DAYONG AgentOS Outbound Gateway', version='0.0.8')
 
 def init():
     with sqlite3.connect(DB) as c:
@@ -33,7 +33,7 @@ def auth(authorization, token):
         raise HTTPException(401, 'Unauthorized')
 
 @app.get('/health')
-def health(): return {'status':'ok','version':'0.0.6'}
+def health(): return {'status':'ok','version':'0.0.8'}
 
 @app.post('/v1/jobs')
 def create_job(job:Job, authorization:str|None=Header(None)):
