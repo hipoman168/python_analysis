@@ -38,3 +38,5 @@ jobs:
         run: python -m pip install -r agentos_gateway/requirements.txt
       - name: Run isolated gateway contract tests
         run: python -m unittest agentos_gateway.test_gateway_contract_v014 -v
+      - name: Run rescue exporter offline tests
+        run: python -m unittest agentos_gateway.test_render_rescue_v017 -v
