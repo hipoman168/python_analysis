@@ -55,6 +55,29 @@ class GatewayContract(unittest.TestCase):
         self.assertEqual(read.json(), evidence)
         self.assertEqual(self.client.get(f"/v1/jobs/{task}/evidence").status_code, 401)
 
+    def test_wrong_node_cannot_claim_and_restart_keeps_evidence(self):
+        task = "ci-persist-001"
+        self.client.post("/v1/jobs", headers=self.auth("unit-admin-token"),
+                         json={"task_id": task, "node_id": "node-02"})
+        wrong = self.client.post("/v1/nodes/node-01/claim", headers=self.auth("unit-node-token"))
+        self.assertEqual(wrong.status_code, 200)
+        self.assertIsNone(wrong.json()["task_id"])
+        right = self.client.post("/v1/nodes/node-02/claim", headers=self.auth("unit-node-token"))
+        self.assertEqual(right.json()["task_id"], task)
+        payload = {"task_id": task, "node_id": "node-02"}
+        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+        evidence = {"payload": payload, "sha256": hashlib.sha256(canonical).hexdigest()}
+        response = self.client.post("/v1/nodes/node-02/result", headers=self.auth("unit-node-token"),
+                                    json={"task_id": task, "status": "PASS", "evidence": evidence})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.client.close()
+        sys.modules.pop("agentos_gateway.gateway", None)
+        restarted = importlib.import_module("agentos_gateway.gateway")
+        with TestClient(restarted.app) as fresh:
+            response = fresh.get(f"/v1/jobs/{task}/evidence", headers=self.auth("unit-d2-read-token"))
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json(), evidence)
+
     def test_reject_bad_hash_and_disallowed_skill(self):
         rejected = self.client.post("/v1/jobs", headers=self.auth("unit-admin-token"),
                                     json={"task_id": "unsafe", "skill": "shell"})
