@@ -1,0 +1,36 @@
+name: AgentOS Gateway CI
+on:
+  push:
+    branches:
+      - feature/agentos-evidence-api-v008
+    paths:
+      - 'agentos_gateway/**'
+      - '.github/workflows/agentos-gateway-ci.yml'
+  pull_request:
+    paths:
+      - 'agentos_gateway/**'
+      - '.github/workflows/agentos-gateway-ci.yml'
+permissions:
+  contents: read
+jobs:
+  static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax validation
+        run: |
+          python -m compileall -q agentos_gateway
+      - name: Check expected gateway routes and worker files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          gateway = Path('agentos_gateway/gateway.py').read_text(encoding='utf-8')
+          for route in ('/health','/v1/jobs','/v1/nodes/{node_id}/claim','/v1/nodes/{node_id}/result','/v1/jobs/{task_id}/evidence'):
+              assert route in gateway, route
+          for path in ('agentos_gateway/node_worker_v007.py','agentos_gateway/outbound_worker_entry_v013.py'):
+              assert Path(path).is_file(), path
+          print('STATIC_CHECK_PASS')
+          PY
