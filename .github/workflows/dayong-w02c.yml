@@ -1,0 +1,31 @@
+name: DAYONG W02-C Offline Contract
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  w02c:
+    runs-on: [self-hosted, Windows, X64, dayong-node02]
+    timeout-minutes: 10
+    steps:
+      - name: Run allowlisted W02-C contract test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'C:\DAYONG_AI\agentos'
+          $py = Join-Path $root 'venv\Scripts\python.exe'
+          $test = Join-Path $root 'w02c_test.py'
+          if (!(Test-Path $py) -or !(Test-Path $test)) { throw 'W02-C files missing' }
+          & $py $test
+          if ($LASTEXITCODE -ne 0) { throw "W02-C exit code $LASTEXITCODE" }
+          $summary = Join-Path $root 'evidence\W02C\_summary.json'
+          if (!(Test-Path $summary)) { throw 'W02-C summary missing' }
+          Get-Content $summary -Raw
+      - name: Upload W02-C evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dayong-w02c-evidence
+          path: C:\DAYONG_AI\agentos\evidence\W02C\_summary.json
+          if-no-files-found: warn
+          retention-days: 7
