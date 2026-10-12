@@ -218,3 +218,8 @@ def get_evidence(task_id: str, authorization: Optional[str] = Header(None)):
     if not row or not row[0]:
         raise HTTPException(404, "evidence not found")
     return json.loads(row[0])
+
+
+# Transport-only endpoints; receipt is not execution.
+from .dual_channel import router as dual_channel_router
+app.include_router(dual_channel_router)
