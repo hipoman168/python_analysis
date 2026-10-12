@@ -223,3 +223,7 @@ def get_evidence(task_id: str, authorization: Optional[str] = Header(None)):
 # Transport-only endpoints; receipt is not execution.
 from .dual_channel import router as dual_channel_router
 app.include_router(dual_channel_router)
+
+# Atomic D2 claim/result; independent of the legacy jobs API.
+from .inbox_dispatch import router as inbox_dispatch_router
+app.include_router(inbox_dispatch_router)
