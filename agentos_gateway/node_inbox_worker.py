@@ -72,11 +72,23 @@ def safe_target(root: Path, target_file: str) -> Path:
     path = root.joinpath(*parts)
     if path.suffix.lower() not in ALLOWED_SUFFIXES:
         raise PermissionError("extension not allowed")
-    # Resolve both parents and leaf to defeat symlink / junction escapes.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    resolved = path.resolve(strict=False)
+    trusted = root.resolve(strict=True)
+    # Check every existing path component *before* making directories.
+    # Windows junctions and Unix symlinks must never point outside the root.
+    current = trusted
+    for component in parts[:-1]:
+        current = current / component
+        if current.exists() or current.is_symlink():
+            if current.is_symlink() or (
+                hasattr(current, "is_junction") and current.is_junction()
+            ):
+                raise PermissionError("symlink/junction parent denied")
+            if not current.is_dir():
+                raise PermissionError("parent is not directory")
+        else:
+            current.mkdir()
     try:
-        resolved.relative_to(root.resolve(strict=True))
+        path.resolve(strict=False).relative_to(trusted)
     except ValueError as exc:
         raise PermissionError("path escapes sandbox") from exc
     if path.is_symlink() or path.exists():
