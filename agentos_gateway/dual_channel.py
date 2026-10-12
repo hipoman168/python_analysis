@@ -63,7 +63,7 @@ def voice(req: VoiceRequest, authorization: Optional[str] = Header(None)):
 
 @router.post("/v1/code/patch")
 def patch(req: CodeRequest, authorization: Optional[str] = Header(None)):
-    _auth(authorization, os.getenv("VOICE_TOKEN"))
+    _auth(authorization, os.getenv("CODE_TOKEN"))
     if req.target_file.startswith(("/", "\\")) or ".." in req.target_file.replace("\\","/").split("/"):
         raise HTTPException(400, "invalid target_file")
     return _receive("code",req.node_id,req.text,req.target_file,req.description)
