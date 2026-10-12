@@ -4,6 +4,7 @@ import os
 import secrets
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -26,6 +27,7 @@ def _auth(header: Optional[str], token: Optional[str]):
     if not header or not header.startswith("Bearer ") or not secrets.compare_digest(header[7:].strip(), token):
         raise HTTPException(401, "unauthorized")
 
+@contextmanager
 def _db():
     c = sqlite3.connect(os.getenv("GATEWAY_DB", "./gateway.db"), timeout=15)
     c.row_factory = sqlite3.Row
@@ -35,7 +37,11 @@ def _db():
       target_file TEXT, description TEXT,
       status TEXT NOT NULL DEFAULT 'RECEIVED',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
-    return c
+    try:
+        with c:
+            yield c
+    finally:
+        c.close()
 
 def _receive(channel, node_id, content, target_file=None, description=""):
     if not content.strip():
