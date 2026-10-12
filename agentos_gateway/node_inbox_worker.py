@@ -20,10 +20,10 @@ import httpx
 
 ALLOWED_SUFFIXES = frozenset({".py", ".json", ".txt", ".md", ".yaml", ".yml", ".toml"})
 DENIED_PARTS = frozenset({".git", ".env", ".venv", "__pycache__", "secrets", "credentials"})
-DEVICE_NAMES = re.compile(r"(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\..*)?$")
+DEVICE_NAMES = re.compile(r"(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$")
 SENSITIVE_CONTENT = (
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"(?i)(?:api[_-]?key|secret|token|password)\\s*[:=]\\s*['\\\"][^'\\\"]{8,}"),
+    re.compile(r"(?i)(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\\\"][^'\\\"]{8,}"),
     re.compile(r"ghp_[A-Za-z0-9]{30,}"),
 )
 NODE_ID = "node-02"
