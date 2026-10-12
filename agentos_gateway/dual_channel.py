@@ -5,7 +5,7 @@ import secrets
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from typing import Optional
+from typing import Optional, Literal
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
@@ -13,13 +13,13 @@ router = APIRouter()
 
 class VoiceRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
-    node_id: str = "node-02"
+    node_id: Literal["node-02"] = "node-02"
 
 class CodeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=500000)
     target_file: str = Field(min_length=1, max_length=500)
     description: str = Field(default="", max_length=2000)
-    node_id: str = "node-02"
+    node_id: Literal["node-02"] = "node-02"
 
 def _auth(header: Optional[str], token: Optional[str]):
     if not token:
@@ -64,7 +64,9 @@ def voice(req: VoiceRequest, authorization: Optional[str] = Header(None)):
 @router.post("/v1/code/patch")
 def patch(req: CodeRequest, authorization: Optional[str] = Header(None)):
     _auth(authorization, os.getenv("CODE_TOKEN"))
-    if req.target_file.startswith(("/", "\\")) or ".." in req.target_file.replace("\\","/").split("/"):
+    parts = req.target_file.replace("\\", "/").split("/")
+    if (req.target_file.startswith(("/", "\\")) or ":" in req.target_file or
+            any(part in ("", ".", "..") for part in parts)):
         raise HTTPException(400, "invalid target_file")
     return _receive("code",req.node_id,req.text,req.target_file,req.description)
 
