@@ -1,0 +1,23 @@
+name: DAYONG AgentOS Task Lifecycle Isolated CI
+on:
+  push:
+    branches: [feature/agentos-task-lifecycle-20261016]
+    paths:
+      - agentos_gateway/**
+      - .github/workflows/dayong-agentos-lifecycle-ci.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lifecycle-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare isolated test environment
+        run: python -m pip install -r agentos_gateway/requirements.txt 'pytest>=8,<9'
+      - name: Validate legacy plus signed lifecycle and failure recovery
+        run: python -m pytest -q agentos_gateway/tests/test_node01_bridge.py agentos_gateway/tests/test_task_lifecycle.py
