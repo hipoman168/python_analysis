@@ -15,6 +15,15 @@ NODE_TOKEN = os.getenv("NODE_TOKEN")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 D2_READ_TOKEN = os.getenv("D2_READ_TOKEN")
 
+def _node_token(node_id: str) -> Optional[str]:
+    # Independent machine identity; fail closed until Node-01 is provisioned.
+    if node_id == "node-02":
+        return NODE_TOKEN
+    if node_id == "node-01":
+        return os.getenv("NODE01_TOKEN")
+    raise HTTPException(404, "Unknown node")
+
+
 SkillT = Literal["system_info", "agentos_development"]
 
 ALLOWED_PAYLOAD_KEYS = {
@@ -104,6 +113,13 @@ def health():
 @app.post("/v1/jobs")
 def create_job(job: Job, authorization: Optional[str] = Header(None)):
     _auth(authorization, ADMIN_TOKEN)
+    if job.node_id not in ("node-01", "node-02"):
+        raise HTTPException(403, "Node not allowlisted")
+    if job.node_id == "node-01":
+        if job.skill != "system_info":
+            raise HTTPException(403, "Node-01 bootstrap limited to system_info")
+        if not os.getenv("NODE01_TOKEN"):
+            raise HTTPException(503, "Node-01 not enrolled")
     _validate_payload(job.payload_json)
     with sqlite3.connect(DB) as c:
         c.execute("BEGIN IMMEDIATE")
@@ -130,7 +146,7 @@ def create_job(job: Job, authorization: Optional[str] = Header(None)):
 
 @app.post("/v1/nodes/{node_id}/claim")
 def claim(node_id: str, authorization: Optional[str] = Header(None)):
-    _auth(authorization, NODE_TOKEN)
+    _auth(authorization, _node_token(node_id))
     row = None
     with sqlite3.connect(DB) as c:
         c.execute("BEGIN IMMEDIATE")
@@ -165,7 +181,7 @@ def claim(node_id: str, authorization: Optional[str] = Header(None)):
 
 @app.post("/v1/nodes/{node_id}/result")
 def submit_result(node_id: str, result: Result, authorization: Optional[str] = Header(None)):
-    _auth(authorization, NODE_TOKEN)
+    _auth(authorization, _node_token(node_id))
     e = result.evidence
     payload = e.get("payload")
     if not isinstance(payload, dict):
