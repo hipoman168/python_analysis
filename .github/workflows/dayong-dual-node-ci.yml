@@ -1,0 +1,26 @@
+name: DAYONG Dual Node Gateway Regression
+on:
+  push:
+    branches:
+      - feature/agentos-node01-node02-bridge-20261016
+  pull_request:
+    branches:
+      - feature/agentos-gateway-v006
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  safe-staging-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test deps
+        run: |
+          python -m pip install -r agentos_gateway/requirements.txt 'pytest>=8,<9'
+      - name: Isolated Node-01 + Node-02 auth, skill and evidence regressions
+        run: |
+          python -m pytest -q agentos_gateway/tests/test_node01_bridge.py

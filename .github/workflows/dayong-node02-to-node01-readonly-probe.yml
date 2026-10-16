@@ -1,0 +1,40 @@
+name: DAYONG Node02 to Node01 Tailnet Readonly Probe
+on:
+  push:
+    branches:
+      - feature/agentos-node01-node02-bridge-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  node02-to-node01:
+    runs-on: [self-hosted, Windows, X64, dayong-node02]
+    timeout-minutes: 8
+    steps:
+      - name: Check Node-02 selfhosted identity and Node-01 tailnet reachability
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Write-Output ('HOSTNAME_MATCH_NODE02='+($env:COMPUTERNAME -eq 'DESKTOP-O0BQMKS'))
+          $ts=(Get-Command tailscale -ErrorAction SilentlyContinue)
+          if (-not $ts) { Write-Output 'TAILSCALE_BINARY_MISSING'; exit 2 }
+          $status=(& tailscale status --json) | ConvertFrom-Json
+          if (-not $status) {Write-Output 'TAILSCALE_STATUS_UNAVAILABLE'; exit 3}
+          $peer=$status.Peer.PSObject.Properties.Value | Where-Object {$_.HostName -eq 'DESKTOP-9KDDRT3'} | Select-Object -First 1
+          if (-not $peer) {Write-Output 'NODE01_NOT_IN_TAILNET_STATUS'; exit 4}
+          Write-Output ('NODE01_TAILSCALE_ONLINE='+[bool]$peer.Online)
+          $ip=$peer.TailscaleIPs | Select-Object -First 1
+          if (-not $ip) {Write-Output 'NODE01_TAILSCALE_IP_MISSING';exit 5}
+          foreach($port in @(445,22,5985,18767,18768,18769)) {
+            $client=[System.Net.Sockets.TcpClient]::new()
+            try {
+              $async=$client.BeginConnect($ip,$port,$null,$null)
+              $open=$async.AsyncWaitHandle.WaitOne(2000)
+              if ($open) {try {$client.EndConnect($async)} catch {$open=$false}}
+              Write-Output ('NODE01_TCP_'+$port+'='+[bool]$open)
+            } catch {Write-Output ('NODE01_TCP_'+$port+'=False')}
+            finally {$client.Dispose()}
+          }
+          $sharePath='\\'+$ip+'\C$\DAYONG_AI\agentos'
+          Write-Output ('NODE01_ADMIN_SHARE_ACCESSIBLE='+(Test-Path -LiteralPath $sharePath))
+          Write-Output 'NODE02_TO_NODE01_READONLY_PROBE_COMPLETE'
