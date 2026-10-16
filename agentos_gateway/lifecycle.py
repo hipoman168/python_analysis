@@ -69,22 +69,22 @@ def reclaim_stale(connection: sqlite3.Connection) -> dict:
     """Must be called inside BEGIN IMMEDIATE before selecting next queued job."""
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=CLAIM_TTL_SECONDS)).isoformat()
     rows = connection.execute(
-        "SELECT task_id,attempts FROM jobs WHERE status='CLAIMED' AND "
+        "SELECT task_id,attempts,status FROM jobs WHERE status IN ('CLAIMED','RUNNING') AND "
         "claimed_at IS NOT NULL AND claimed_at < ?", (cutoff,),
     ).fetchall()
     counters = {"retried": 0, "deadlettered": 0}
-    for task_id, attempts in rows:
+    for task_id, attempts, old_status in rows:
         if attempts >= MAX_ATTEMPTS:
             target, reason, key = "DEADLETTER", "claim_timeout_exhausted", "deadlettered"
         else:
             target, reason, key = "PENDING", "claim_timeout_retry", "retried"
         updated = connection.execute(
             "UPDATE jobs SET status=?, claimed_at=NULL,last_error=? "
-            "WHERE task_id=? AND status='CLAIMED'",
-            (target, reason, task_id),
+            "WHERE task_id=? AND status=?",
+            (target, reason, task_id, old_status),
         )
         if updated.rowcount:
-            audit(connection, task_id, "CLAIMED", target, reason)
+            audit(connection, task_id, old_status, target, reason)
             counters[key] += 1
     return counters
 
