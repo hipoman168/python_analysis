@@ -155,7 +155,7 @@ def test_retry_rotates_nonce_and_old_result_rejected(tmp_path, monkeypatch):
     assert second["task_id"]=="T-ROTATE-RETRY" and second["nonce"]!=old_nonce
     assert cl.post("/v1/nodes/node-01/result",headers=node,json={
         "task_id":"T-ROTATE-RETRY","status":"PASS",
-        "evidence":stale}).status_code==403
+        "evidence":stale}).status_code==409
     fresh=_sig("node-01","T-ROTATE-RETRY",second["nonce"],"node1-test-token")
     assert cl.post("/v1/nodes/node-01/started",headers=node,json={
         "task_id":"T-ROTATE-RETRY","nonce":second["nonce"]}).status_code==200
