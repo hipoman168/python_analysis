@@ -123,3 +123,33 @@ def test_wrong_skill_and_target_not_stealable(tmp_path,monkeypatch):
               json={"skill":"system_info","task_id":"T-INFO"}).json()
     assert c["task_id"]=="T-INFO"
     assert cl.get("/v1/jobs/T-DEV",headers=adm).json()["status"]=="PENDING"
+
+
+def test_retry_rotates_nonce_and_old_result_rejected(tmp_path, monkeypatch):
+    cl, gw = _client(tmp_path, monkeypatch)
+    admin = {"Authorization": "Bearer admin-test-token"}
+    node = {"Authorization": "Bearer node1-test-token"}
+    monkeypatch.setattr(gw.lifecycle, "dispatch_github", lambda **kw: "WAKE_ACCEPTED")
+    assert cl.post("/v1/jobs",headers=admin,json={
+        "task_id":"T-ROTATE-RETRY","node_id":"node-01",
+        "skill":"system_info","auto_wake":True}).status_code==200
+    first=cl.post("/v1/nodes/node-01/claim",headers=node,
+                  json={"task_id":"T-ROTATE-RETRY","skill":"system_info"}).json()
+    old_nonce=first["nonce"]
+    with gw.sqlite3.connect(gw.DB) as db:
+        db.execute("UPDATE jobs SET claimed_at=? WHERE task_id='T-ROTATE-RETRY'",
+                   ("2000-01-01T00:00:00+00:00",))
+    stale=_sig("node-01","T-ROTATE-RETRY",old_nonce,"node1-test-token")
+    assert cl.post("/v1/nodes/node-01/result",headers=node,json={
+        "task_id":"T-ROTATE-RETRY","status":"PASS",
+        "evidence":stale}).status_code==409
+    second=cl.post("/v1/nodes/node-01/claim",headers=node,
+                   json={"task_id":"T-ROTATE-RETRY","skill":"system_info"}).json()
+    assert second["task_id"]=="T-ROTATE-RETRY" and second["nonce"]!=old_nonce
+    assert cl.post("/v1/nodes/node-01/result",headers=node,json={
+        "task_id":"T-ROTATE-RETRY","status":"PASS",
+        "evidence":stale}).status_code==403
+    fresh=_sig("node-01","T-ROTATE-RETRY",second["nonce"],"node1-test-token")
+    assert cl.post("/v1/nodes/node-01/result",headers=node,json={
+        "task_id":"T-ROTATE-RETRY","status":"PASS","evidence":fresh
+    }).json()["status"]=="COMPLETED"
