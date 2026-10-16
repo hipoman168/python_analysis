@@ -4,6 +4,8 @@ import json
 import sqlite3
 import hashlib
 import secrets
+import re
+from datetime import datetime, timedelta, timezone
 from . import lifecycle
 from typing import Optional, Literal
 from fastapi import FastAPI, Header, HTTPException
@@ -134,6 +136,8 @@ def create_job(job: Job, authorization: Optional[str] = Header(None)):
     _validate_payload(job.payload_json)
     if job.auto_wake and job.skill != "system_info":
         raise HTTPException(403, "Auto-wake restricted to system_info")
+    if job.auto_wake and not re.fullmatch(r"[A-Za-z0-9_-]{1,80}",job.task_id):
+        raise HTTPException(400, "Auto-wake task_id must be a safe short identifier")
     with sqlite3.connect(DB) as c:
         c.execute("BEGIN IMMEDIATE")
         if job.skill == "agentos_development":
@@ -194,15 +198,18 @@ def claim(node_id: str, body: Optional[ClaimFilter] = None,
             tuple(values),
         ).fetchone()
         if row:
+            # Rotate nonce per claim attempt; a timed-out worker may not complete a retry.
+            new_nonce = secrets.token_hex(16) if row[3] else None
             cur = c.execute(
-                "UPDATE jobs SET status='CLAIMED', claimed_at=?,attempts=attempts+1 "
+                "UPDATE jobs SET status='CLAIMED', claimed_at=?,attempts=attempts+1,nonce=? "
                 "WHERE task_id=? AND status='PENDING'",
-                (lifecycle.utcnow(),row[0]),
+                (lifecycle.utcnow(),new_nonce,row[0]),
             )
             if cur.rowcount != 1:
                 c.execute("ROLLBACK")
                 raise HTTPException(409, "race: task not claimable")
             lifecycle.audit(c, row[0], "PENDING", "CLAIMED", "node_claimed")
+            row = (row[0],row[1],row[2],new_nonce)
         c.execute("COMMIT")
     if not row:
         return {"task_id": None}
@@ -232,11 +239,14 @@ def submit_result(node_id: str, result: Result, authorization: Optional[str] = H
     final = "COMPLETED" if result.status == "PASS" else "FAILED"
     with sqlite3.connect(DB) as c:
         c.execute("BEGIN IMMEDIATE")
-        existing = c.execute("SELECT skill,nonce,auto_wake,status FROM jobs WHERE task_id=? AND node_id=?",
+        existing = c.execute("SELECT skill,nonce,auto_wake,status,claimed_at FROM jobs WHERE task_id=? AND node_id=?",
                              (result.task_id,node_id)).fetchone()
         if not existing or existing[3] != "CLAIMED":
             raise HTTPException(409, "Task not claimed")
-        skill, nonce, auto_wake, _ = existing
+        skill, nonce, auto_wake, _, claimed_at = existing
+        if auto_wake and (not claimed_at or
+            datetime.fromisoformat(claimed_at) < datetime.now(timezone.utc)-timedelta(seconds=lifecycle.CLAIM_TTL_SECONDS)):
+            raise HTTPException(409,"Claim lease expired")
         if payload.get("skill_name") != skill:
             raise HTTPException(400, "Evidence skill mismatch")
         if auto_wake and not lifecycle.check_result_signature(e, _node_token(node_id), nonce):
