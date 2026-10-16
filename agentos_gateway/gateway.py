@@ -96,6 +96,7 @@ class Result(BaseModel):
 
 class ClaimFilter(BaseModel):
     skill: Optional[Literal["system_info"]] = None
+    task_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 def _validate_payload(payload_json: Optional[str]) -> None:
@@ -182,11 +183,15 @@ def claim(node_id: str, body: Optional[ClaimFilter] = None,
             return {"task_id": None, "reason": "node_already_claimed",
                     "claimed_task_id": busy[0]}
         where = " AND skill='system_info'" if body and body.skill == "system_info" else ""
+        values = [node_id]
+        if body and body.task_id:
+            where += " AND task_id=?"
+            values.append(body.task_id)
         row = c.execute(
             "SELECT task_id, skill, payload_json, nonce FROM jobs "
             "WHERE node_id=? AND status='PENDING'" + where + " "
             "ORDER BY created_at, rowid LIMIT 1",
-            (node_id,),
+            tuple(values),
         ).fetchone()
         if row:
             cur = c.execute(
