@@ -70,6 +70,6 @@ def test_node01_worker_is_allowlisted(monkeypatch):
             return {"task_id":None}
         raise AssertionError("No result call without claim")
     monkeypatch.setattr(worker,"_post",fake_post)
-    monkeypatch.setenv("NODE_TOKEN","test-node01-do-not-use")
+    monkeypatch.setenv("NODE_TOKEN","test-node01-do-not-use-longsecret")
     assert worker.run_once()["status"]=="NO_PENDING_JOB"
     assert called==["/v1/nodes/node-01/claim"]
