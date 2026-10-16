@@ -101,6 +101,11 @@ class ClaimFilter(BaseModel):
     task_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
+class StartWork(BaseModel):
+    task_id: str
+    nonce: str
+
+
 def _validate_payload(payload_json: Optional[str]) -> None:
     if not payload_json:
         return
@@ -142,7 +147,7 @@ def create_job(job: Job, authorization: Optional[str] = Header(None)):
         c.execute("BEGIN IMMEDIATE")
         if job.skill == "agentos_development":
             busy = c.execute(
-                "SELECT COUNT(*) FROM jobs WHERE node_id=? AND status='CLAIMED'",
+                "SELECT COUNT(*) FROM jobs WHERE node_id=? AND status IN ('CLAIMED','RUNNING')",
                 (job.node_id,),
             ).fetchone()[0]
             if busy:
@@ -179,7 +184,7 @@ def claim(node_id: str, body: Optional[ClaimFilter] = None,
         c.execute("BEGIN IMMEDIATE")
         lifecycle.reclaim_stale(c)
         busy = c.execute(
-            "SELECT task_id FROM jobs WHERE node_id=? AND status='CLAIMED' LIMIT 1",
+            "SELECT task_id FROM jobs WHERE node_id=? AND status IN ('CLAIMED','RUNNING') LIMIT 1",
             (node_id,),
         ).fetchone()
         if busy:
@@ -217,6 +222,28 @@ def claim(node_id: str, body: Optional[ClaimFilter] = None,
             "nonce": row[3]}
 
 
+@app.post("/v1/nodes/{node_id}/started")
+def mark_running(node_id: str, started: StartWork, authorization: Optional[str] = Header(None)):
+    """Explicit claim -> running transition; old HMAC-free jobs remain unchanged."""
+    _auth(authorization,_node_token(node_id))
+    with sqlite3.connect(DB) as c:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute(
+            "SELECT nonce,auto_wake,status FROM jobs WHERE task_id=? AND node_id=?",
+            (started.task_id,node_id)).fetchone()
+        if not row or row[2] != "CLAIMED" or not row[1]:
+            raise HTTPException(409,"Expected claimed auto_wake job")
+        if not row[0] or not secrets.compare_digest(row[0],started.nonce):
+            raise HTTPException(403,"Claim nonce rejected")
+        cur=c.execute(
+            "UPDATE jobs SET status='RUNNING' WHERE task_id=? AND node_id=? AND status='CLAIMED'",
+            (started.task_id,node_id))
+        if cur.rowcount!=1:
+            raise HTTPException(409,"Claim no longer active")
+        lifecycle.audit(c,started.task_id,"CLAIMED","RUNNING","worker_started")
+    return {"task_id":started.task_id,"status":"RUNNING"}
+
+
 @app.post("/v1/nodes/{node_id}/result")
 def submit_result(node_id: str, result: Result, authorization: Optional[str] = Header(None)):
     _auth(authorization, _node_token(node_id))
@@ -241,9 +268,11 @@ def submit_result(node_id: str, result: Result, authorization: Optional[str] = H
         c.execute("BEGIN IMMEDIATE")
         existing = c.execute("SELECT skill,nonce,auto_wake,status,claimed_at FROM jobs WHERE task_id=? AND node_id=?",
                              (result.task_id,node_id)).fetchone()
-        if not existing or existing[3] != "CLAIMED":
-            raise HTTPException(409, "Task not claimed")
-        skill, nonce, auto_wake, _, claimed_at = existing
+        if not existing or existing[3] not in ("CLAIMED","RUNNING"):
+            raise HTTPException(409, "Task not claimed or running")
+        skill, nonce, auto_wake, existing_status, claimed_at = existing
+        if auto_wake and existing_status!="RUNNING":
+            raise HTTPException(409,"Worker did not mark task RUNNING")
         if auto_wake and (not claimed_at or
             datetime.fromisoformat(claimed_at) < datetime.now(timezone.utc)-timedelta(seconds=lifecycle.CLAIM_TTL_SECONDS)):
             raise HTTPException(409,"Claim lease expired")
@@ -253,13 +282,13 @@ def submit_result(node_id: str, result: Result, authorization: Optional[str] = H
             raise HTTPException(403, "Signed evidence nonce or HMAC invalid")
         cur = c.execute(
             "UPDATE jobs SET status=?, evidence=?,finished_at=?,claimed_at=NULL "
-            "WHERE task_id=? AND node_id=? AND status='CLAIMED'",
+            "WHERE task_id=? AND node_id=? AND status IN ('CLAIMED','RUNNING')",
             (final, json.dumps(e, ensure_ascii=False),lifecycle.utcnow(),
              result.task_id, node_id),
         )
         if not cur.rowcount:
             raise HTTPException(409, "Task not claimed")
-        lifecycle.audit(c,result.task_id,"CLAIMED",final,"worker_result",digest)
+        lifecycle.audit(c,result.task_id,existing_status,final,"worker_result",digest)
     return {"task_id": result.task_id, "status": final, "sha256": digest}
 
 
