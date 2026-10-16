@@ -20,7 +20,10 @@ def _node_token(node_id: str) -> Optional[str]:
     if node_id == "node-02":
         return NODE_TOKEN
     if node_id == "node-01":
-        return os.getenv("NODE01_TOKEN")
+        token = os.getenv("NODE01_TOKEN")
+        if not token:
+            raise HTTPException(503, "Node-01 not enrolled")
+        return token
     raise HTTPException(404, "Unknown node")
 
 
