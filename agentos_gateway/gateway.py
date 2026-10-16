@@ -4,6 +4,7 @@ import json
 import sqlite3
 import hashlib
 import secrets
+from . import lifecycle
 from typing import Optional, Literal
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -52,6 +53,7 @@ def _init_db() -> None:
         cols = [r[1] for r in c.execute("PRAGMA table_info(jobs)").fetchall()]
         if "payload_json" not in cols:
             c.execute("ALTER TABLE jobs ADD COLUMN payload_json TEXT")
+        lifecycle.init_schema(c)
 
 
 _init_db()
@@ -83,12 +85,17 @@ class Job(BaseModel):
     node_id: str = "node-02"
     skill: SkillT = "system_info"
     payload_json: Optional[str] = None
+    auto_wake: bool = False
 
 
 class Result(BaseModel):
     task_id: str
     status: str
     evidence: dict
+
+
+class ClaimFilter(BaseModel):
+    skill: Optional[Literal["system_info"]] = None
 
 
 def _validate_payload(payload_json: Optional[str]) -> None:
@@ -124,6 +131,8 @@ def create_job(job: Job, authorization: Optional[str] = Header(None)):
         if not os.getenv("NODE01_TOKEN"):
             raise HTTPException(503, "Node-01 not enrolled")
     _validate_payload(job.payload_json)
+    if job.auto_wake and job.skill != "system_info":
+        raise HTTPException(403, "Auto-wake restricted to system_info")
     with sqlite3.connect(DB) as c:
         c.execute("BEGIN IMMEDIATE")
         if job.skill == "agentos_development":
@@ -139,20 +148,31 @@ def create_job(job: Job, authorization: Optional[str] = Header(None)):
         if exists:
             raise HTTPException(409, f"task_id already exists: {job.task_id}")
         c.execute(
-            "INSERT INTO jobs (task_id, node_id, skill, payload_json, status) "
-            "VALUES (?, ?, ?, ?, 'PENDING')",
-            (job.task_id, job.node_id, job.skill, job.payload_json),
+            "INSERT INTO jobs (task_id, node_id, skill, payload_json, status, auto_wake, nonce) "
+            "VALUES (?, ?, ?, ?, 'PENDING', ?, ?)",
+            (job.task_id, job.node_id, job.skill, job.payload_json,
+             1 if job.auto_wake else 0,
+             secrets.token_hex(16) if job.auto_wake else None),
         )
+        lifecycle.audit(c, job.task_id, None, "PENDING", "accepted_by_admin")
+    wake = "NOT_REQUESTED"
+    if job.auto_wake:
+        wake = lifecycle.dispatch_github(node_id=job.node_id, task_id=job.task_id)
+        with sqlite3.connect(DB) as c:
+            c.execute("UPDATE jobs SET dispatch_status=? WHERE task_id=?", (wake, job.task_id))
+            lifecycle.audit(c, job.task_id, "PENDING", "PENDING", wake)
     return {"task_id": job.task_id, "node_id": job.node_id,
-            "skill": job.skill, "status": "PENDING"}
+            "skill": job.skill, "status": "PENDING", "dispatch_status": wake}
 
 
 @app.post("/v1/nodes/{node_id}/claim")
-def claim(node_id: str, authorization: Optional[str] = Header(None)):
+def claim(node_id: str, body: Optional[ClaimFilter] = None,
+          authorization: Optional[str] = Header(None)):
     _auth(authorization, _node_token(node_id))
     row = None
     with sqlite3.connect(DB) as c:
         c.execute("BEGIN IMMEDIATE")
+        lifecycle.reclaim_stale(c)
         busy = c.execute(
             "SELECT task_id FROM jobs WHERE node_id=? AND status='CLAIMED' LIMIT 1",
             (node_id,),
@@ -161,30 +181,35 @@ def claim(node_id: str, authorization: Optional[str] = Header(None)):
             c.execute("COMMIT")
             return {"task_id": None, "reason": "node_already_claimed",
                     "claimed_task_id": busy[0]}
+        where = " AND skill='system_info'" if body and body.skill == "system_info" else ""
         row = c.execute(
-            "SELECT task_id, skill, payload_json FROM jobs "
-            "WHERE node_id=? AND status='PENDING' "
-            "ORDER BY created_at LIMIT 1",
+            "SELECT task_id, skill, payload_json, nonce FROM jobs "
+            "WHERE node_id=? AND status='PENDING'" + where + " "
+            "ORDER BY created_at, rowid LIMIT 1",
             (node_id,),
         ).fetchone()
         if row:
             cur = c.execute(
-                "UPDATE jobs SET status='CLAIMED' "
+                "UPDATE jobs SET status='CLAIMED', claimed_at=?,attempts=attempts+1 "
                 "WHERE task_id=? AND status='PENDING'",
-                (row[0],),
+                (lifecycle.utcnow(),row[0]),
             )
             if cur.rowcount != 1:
                 c.execute("ROLLBACK")
                 raise HTTPException(409, "race: task not claimable")
+            lifecycle.audit(c, row[0], "PENDING", "CLAIMED", "node_claimed")
         c.execute("COMMIT")
     if not row:
         return {"task_id": None}
-    return {"task_id": row[0], "skill": row[1], "payload_json": row[2]}
+    return {"task_id": row[0], "skill": row[1], "payload_json": row[2],
+            "nonce": row[3]}
 
 
 @app.post("/v1/nodes/{node_id}/result")
 def submit_result(node_id: str, result: Result, authorization: Optional[str] = Header(None)):
     _auth(authorization, _node_token(node_id))
+    if result.status not in ("PASS","FAIL"):
+        raise HTTPException(400, "Only PASS or FAIL accepted")
     e = result.evidence
     payload = e.get("payload")
     if not isinstance(payload, dict):
@@ -201,14 +226,25 @@ def submit_result(node_id: str, result: Result, authorization: Optional[str] = H
         raise HTTPException(400, "Evidence hash mismatch")
     final = "COMPLETED" if result.status == "PASS" else "FAILED"
     with sqlite3.connect(DB) as c:
+        c.execute("BEGIN IMMEDIATE")
+        existing = c.execute("SELECT skill,nonce,auto_wake,status FROM jobs WHERE task_id=? AND node_id=?",
+                             (result.task_id,node_id)).fetchone()
+        if not existing or existing[3] != "CLAIMED":
+            raise HTTPException(409, "Task not claimed")
+        skill, nonce, auto_wake, _ = existing
+        if payload.get("skill_name") != skill:
+            raise HTTPException(400, "Evidence skill mismatch")
+        if auto_wake and not lifecycle.check_result_signature(e, _node_token(node_id), nonce):
+            raise HTTPException(403, "Signed evidence nonce or HMAC invalid")
         cur = c.execute(
-            "UPDATE jobs SET status=?, evidence=? "
+            "UPDATE jobs SET status=?, evidence=?,finished_at=?,claimed_at=NULL "
             "WHERE task_id=? AND node_id=? AND status='CLAIMED'",
-            (final, json.dumps(e, ensure_ascii=False),
+            (final, json.dumps(e, ensure_ascii=False),lifecycle.utcnow(),
              result.task_id, node_id),
         )
         if not cur.rowcount:
             raise HTTPException(409, "Task not claimed")
+        lifecycle.audit(c,result.task_id,"CLAIMED",final,"worker_result",digest)
     return {"task_id": result.task_id, "status": final, "sha256": digest}
 
 
@@ -237,3 +273,32 @@ def get_evidence(task_id: str, authorization: Optional[str] = Header(None)):
     if not row or not row[0]:
         raise HTTPException(404, "evidence not found")
     return json.loads(row[0])
+
+@app.post("/v1/jobs/{task_id}/wake")
+def wake_job(task_id: str, authorization: Optional[str] = Header(None)):
+    """Retry the GitHub wake signal, never create a second job."""
+    _auth(authorization,ADMIN_TOKEN)
+    with sqlite3.connect(DB) as c:
+        row=c.execute("SELECT node_id,skill,status,auto_wake FROM jobs WHERE task_id=?",
+                      (task_id,)).fetchone()
+    if not row:
+        raise HTTPException(404,"Task not found")
+    node_id,skill,status,auto_wake=row
+    if not auto_wake or skill!="system_info" or status!="PENDING":
+        raise HTTPException(409,"Only pending auto-wake system_info jobs may be woken")
+    wake=lifecycle.dispatch_github(node_id=node_id,task_id=task_id)
+    with sqlite3.connect(DB) as c:
+        c.execute("UPDATE jobs SET dispatch_status=? WHERE task_id=?", (wake,task_id))
+        lifecycle.audit(c,task_id,status,status,wake)
+    return {"task_id":task_id,"status":status,"dispatch_status":wake}
+
+
+@app.get("/v1/jobs/{task_id}/audit")
+def get_job_audit(task_id: str, authorization: Optional[str] = Header(None)):
+    _auth_any(authorization,[ADMIN_TOKEN,D2_READ_TOKEN])
+    with sqlite3.connect(DB) as c:
+        rows=c.execute("SELECT old_state,new_state,reason,event_at,evidence_sha256 "
+                       "FROM job_audit WHERE task_id=? ORDER BY audit_id",
+                       (task_id,)).fetchall()
+    return {"task_id":task_id,"events":[{"from":x[0],"to":x[1],"reason":x[2],
+                       "at":x[3],"evidence_sha256":x[4]} for x in rows]}
